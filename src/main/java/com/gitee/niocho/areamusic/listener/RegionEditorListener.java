@@ -2,6 +2,7 @@ package com.gitee.niocho.areamusic.listener;
 
 import com.gitee.niocho.areamusic.editor.RegionEditorService;
 import com.gitee.niocho.areamusic.editor.RegionEditorTool;
+import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -19,6 +20,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.BundleMeta;
 
 public final class RegionEditorListener implements Listener {
     private final RegionEditorService editor;
@@ -48,7 +50,10 @@ public final class RegionEditorListener implements Listener {
         switch (tool){
             case POINT:
                 if(action == Action.RIGHT_CLICK_BLOCK){
-                    editor.addPoint(player, event.getClickedBlock().getLocation());
+                    Block clickedBlock = event.getClickedBlock();
+                    if(clickedBlock != null){
+                        editor.addPoint(player, clickedBlock.getLocation());
+                    }
                 } else if(action == Action.LEFT_CLICK_BLOCK || action == Action.LEFT_CLICK_AIR){
                     if(player.isSneaking()){
                         editor.clearPoints(player);
@@ -78,14 +83,14 @@ public final class RegionEditorListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onEntityInteract(PlayerInteractEntityEvent event){
-        if(editor.identifyTool(event.getPlayer().getInventory().getItemInMainHand()) != null){
+        if(editor.containsEditorTool(event.getPlayer().getInventory().getItemInMainHand())){
             event.setCancelled(true);
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onDrop(PlayerDropItemEvent event){
-        if(editor.identifyTool(event.getItemDrop().getItemStack()) != null){
+        if(editor.containsEditorTool(event.getItemDrop().getItemStack())){
             event.setCancelled(true);
             event.getPlayer().sendMessage("§c[RookieAreaMusic] 编辑工具不能丢弃");
         }
@@ -93,40 +98,75 @@ public final class RegionEditorListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onSwapHand(PlayerSwapHandItemsEvent event){
-        if(editor.identifyTool(event.getMainHandItem()) != null
-                || editor.identifyTool(event.getOffHandItem()) != null){
+        if(editor.containsEditorTool(event.getMainHandItem())
+                || editor.containsEditorTool(event.getOffHandItem())){
             event.setCancelled(true);
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onInventoryClick(InventoryClickEvent event){
-        boolean editorTool = editor.identifyTool(event.getCurrentItem()) != null
-                || editor.identifyTool(event.getCursor()) != null;
+        boolean editorTool = editor.containsEditorTool(event.getCurrentItem())
+                || editor.containsEditorTool(event.getCursor());
+        boolean bundleInvolved = isBundle(event.getCurrentItem())
+                || isBundle(event.getCursor());
         if(event.getClick() == ClickType.NUMBER_KEY && event.getHotbarButton() >= 0){
-            editorTool |= editor.identifyTool(
+            editorTool |= editor.containsEditorTool(
                     event.getWhoClicked().getInventory().getItem(event.getHotbarButton())
-            ) != null;
+            );
         }
         if(event.getClick() == ClickType.SWAP_OFFHAND
                 && event.getWhoClicked() instanceof Player){
-            editorTool |= editor.identifyTool(
+            editorTool |= editor.containsEditorTool(
                     ((Player) event.getWhoClicked()).getInventory().getItemInOffHand()
-            ) != null;
+            );
         }
         if(editorTool){
+            if(!bundleInvolved && isSafeStorageMove(event)){
+                return;
+            }
             event.setCancelled(true);
             if(event.getWhoClicked() instanceof Player){
-                ((Player) event.getWhoClicked()).sendMessage("§c[RookieAreaMusic] 编辑工具不能移动或存入容器");
+                ((Player) event.getWhoClicked()).sendMessage(
+                        "§c[RookieAreaMusic] 编辑工具只能在背包和快捷栏之间移动"
+                );
             }
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onInventoryDrag(InventoryDragEvent event){
-        if(editor.identifyTool(event.getOldCursor()) != null){
-            event.setCancelled(true);
+        if(editor.containsEditorTool(event.getOldCursor())){
+            int topSize = event.getView().getTopInventory().getSize();
+            for(Integer rawSlot : event.getRawSlots()){
+                int convertedSlot = event.getView().convertSlot(rawSlot);
+                if(rawSlot < topSize || convertedSlot < 0 || convertedSlot >= 36){
+                    event.setCancelled(true);
+                    return;
+                }
+            }
         }
+    }
+
+    private boolean isSafeStorageMove(InventoryClickEvent event){
+        if(!(event.getClickedInventory() instanceof org.bukkit.inventory.PlayerInventory)){
+            return false;
+        }
+        if(event.getSlot() < 0 || event.getSlot() >= 36 || event.isShiftClick()){
+            return false;
+        }
+        ClickType click = event.getClick();
+        return click != ClickType.DROP
+                && click != ClickType.CONTROL_DROP
+                && click != ClickType.CREATIVE
+                && click != ClickType.SWAP_OFFHAND
+                && click != ClickType.UNKNOWN;
+    }
+
+    private boolean isBundle(ItemStack item){
+        return item != null
+                && !item.getType().isAir()
+                && item.getItemMeta() instanceof BundleMeta;
     }
 
     @EventHandler
@@ -145,12 +185,19 @@ public final class RegionEditorListener implements Listener {
     @EventHandler
     public void onDeath(PlayerDeathEvent event){
         boolean removed = false;
-        java.util.Iterator<ItemStack> iterator = event.getDrops().iterator();
+        java.util.ListIterator<ItemStack> iterator = event.getDrops().listIterator();
         while(iterator.hasNext()){
-            if(editor.identifyTool(iterator.next()) != null){
-                iterator.remove();
-                removed = true;
+            ItemStack item = iterator.next();
+            if(!editor.containsEditorTool(item)){
+                continue;
             }
+            ItemStack retainedItem = editor.removeEditorTools(item);
+            if(retainedItem == null || retainedItem.getType().isAir()){
+                iterator.remove();
+            } else {
+                iterator.set(retainedItem);
+            }
+            removed = true;
         }
         if(editor.getSession(event.getEntity().getUniqueId()) != null){
             editor.cancelImmediately(event.getEntity(), false);

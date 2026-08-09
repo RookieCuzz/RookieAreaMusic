@@ -29,6 +29,9 @@ public final class RegionEditSession {
     private int currentY;
     private List<RegionShapeConfig.Point> draft;
     private long cancelConfirmationDeadline;
+    private long draftRevision;
+    private long validatedDraftRevision = -1L;
+    private String cachedValidationError;
 
     public RegionEditSession(Mode mode,
                              String worldName,
@@ -67,7 +70,14 @@ public final class RegionEditSession {
         if(!isFinite(x) || !isFinite(z)){
             throw new IllegalArgumentException("顶点坐标必须是有限数字");
         }
+        if(draft.size() >= SlicedPolygonVolume.MAX_VERTICES_PER_SLICE){
+            throw new IllegalStateException(
+                    "每个切片的顶点数不能超过 "
+                            + SlicedPolygonVolume.MAX_VERTICES_PER_SLICE
+            );
+        }
         draft.add(RegionShapeConfig.Point.builder().x(x).z(z).build());
+        invalidateDraftValidation();
         cancelConfirmationDeadline = 0L;
     }
 
@@ -76,12 +86,14 @@ public final class RegionEditSession {
             return false;
         }
         draft.remove(draft.size() - 1);
+        invalidateDraftValidation();
         cancelConfirmationDeadline = 0L;
         return true;
     }
 
     public void clearCurrentSlice(){
         draft.clear();
+        invalidateDraftValidation();
         cancelConfirmationDeadline = 0L;
     }
 
@@ -90,6 +102,7 @@ public final class RegionEditSession {
         if(error != null){
             throw new IllegalStateException(error);
         }
+        validateSaveCapacity();
         slices.put(currentY, copyPoints(draft));
         cancelConfirmationDeadline = 0L;
     }
@@ -99,6 +112,12 @@ public final class RegionEditSession {
         int targetY = playerY > currentY ? playerY : currentY + 1;
         if(targetY < minY || targetY > maxY){
             throw new IllegalStateException("下一切片高度超出世界范围");
+        }
+        if(!slices.containsKey(targetY)
+                && slices.size() >= SlicedPolygonVolume.MAX_SLICE_COUNT){
+            throw new IllegalStateException(
+                    "切片数量不能超过 " + SlicedPolygonVolume.MAX_SLICE_COUNT
+            );
         }
 
         List<RegionShapeConfig.Point> existing = slices.get(targetY);
@@ -111,6 +130,7 @@ public final class RegionEditSession {
         } else {
             draft = copyPoints(previous);
         }
+        invalidateDraftValidation();
     }
 
     public void saveAndPrevious(){
@@ -121,6 +141,7 @@ public final class RegionEditSession {
         }
         currentY = previousY;
         draft = copyPoints(slices.get(previousY));
+        invalidateDraftValidation();
     }
 
     public RegionShapeConfig finish(){
@@ -141,8 +162,21 @@ public final class RegionEditSession {
     }
 
     public String currentValidationError(){
+        if(validatedDraftRevision == draftRevision){
+            return cachedValidationError;
+        }
+        cachedValidationError = validateCurrentDraft();
+        validatedDraftRevision = draftRevision;
+        return cachedValidationError;
+    }
+
+    private String validateCurrentDraft(){
         if(draft.size() < 3){
             return "当前切片至少需要 3 个顶点";
+        }
+        if(draft.size() > SlicedPolygonVolume.MAX_VERTICES_PER_SLICE){
+            return "每个切片的顶点数不能超过 "
+                    + SlicedPolygonVolume.MAX_VERTICES_PER_SLICE;
         }
         try {
             RegionShapeConfig config = RegionShapeConfig.builder()
@@ -220,6 +254,34 @@ public final class RegionEditSession {
                 throw new IllegalArgumentException("切片 Y 坐标不能重复: " + blockY);
             }
         }
+    }
+
+    private void validateSaveCapacity(){
+        boolean newSlice = !slices.containsKey(currentY);
+        if(newSlice && slices.size() >= SlicedPolygonVolume.MAX_SLICE_COUNT){
+            throw new IllegalStateException(
+                    "切片数量不能超过 " + SlicedPolygonVolume.MAX_SLICE_COUNT
+            );
+        }
+
+        long totalVertices = draft.size();
+        for(Map.Entry<Integer, List<RegionShapeConfig.Point>> entry : slices.entrySet()){
+            if(entry.getKey() != currentY){
+                totalVertices += entry.getValue().size();
+            }
+        }
+        if(totalVertices > SlicedPolygonVolume.MAX_TOTAL_VERTICES){
+            throw new IllegalStateException(
+                    "所有切片的顶点总数不能超过 "
+                            + SlicedPolygonVolume.MAX_TOTAL_VERTICES
+            );
+        }
+    }
+
+    private void invalidateDraftValidation(){
+        draftRevision++;
+        validatedDraftRevision = -1L;
+        cachedValidationError = null;
     }
 
     private static List<RegionShapeConfig.Point> copyPoints(

@@ -18,11 +18,13 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.inventory.meta.BundleMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -156,17 +158,42 @@ public final class RegionEditorService {
         ));
     }
 
+    public boolean containsEditorTool(ItemStack item){
+        if(item == null || item.getType().isAir()){
+            return false;
+        }
+        if(identifyTool(item) != null){
+            return true;
+        }
+        ItemMeta meta = item.getItemMeta();
+        if(!(meta instanceof BundleMeta)){
+            return false;
+        }
+        for(ItemStack bundledItem : ((BundleMeta) meta).getItems()){
+            if(containsEditorTool(bundledItem)){
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void addPoint(Player player, Location blockLocation){
         RegionEditSession session = requireSession(player);
         if(session == null || blockLocation == null){
             return;
         }
-        if(!session.getWorldName().equals(blockLocation.getWorld().getName())){
+        World blockWorld = blockLocation.getWorld();
+        if(blockWorld == null
+                || !session.getWorldName().equals(blockWorld.getName())){
             player.sendMessage("§c[RookieAreaMusic] 顶点必须位于编辑区域的世界");
             return;
         }
-        session.addPoint(blockLocation.getBlockX() + 0.5, blockLocation.getBlockZ() + 0.5);
-        player.sendMessage("§a[RookieAreaMusic] 已添加顶点 #" + session.getDraft().size());
+        try {
+            session.addPoint(blockLocation.getBlockX() + 0.5, blockLocation.getBlockZ() + 0.5);
+            player.sendMessage("§a[RookieAreaMusic] 已添加顶点 #" + session.getDraft().size());
+        } catch (IllegalStateException | IllegalArgumentException e){
+            player.sendMessage("§c[RookieAreaMusic] 无法添加顶点: " + e.getMessage());
+        }
     }
 
     public void undoPoint(Player player){
@@ -340,13 +367,33 @@ public final class RegionEditorService {
         PlayerInventory inventory = player.getInventory();
         ItemStack[] contents = inventory.getContents();
         for(int index = 0; index < contents.length; index++){
-            if(identifyTool(contents[index]) != null){
-                inventory.setItem(index, null);
+            inventory.setItem(index, removeEditorTools(contents[index]));
+        }
+    }
+
+    public ItemStack removeEditorTools(ItemStack item){
+        if(item == null || item.getType().isAir()){
+            return item;
+        }
+        if(identifyTool(item) != null){
+            return null;
+        }
+        ItemMeta meta = item.getItemMeta();
+        if(!(meta instanceof BundleMeta)){
+            return item;
+        }
+
+        BundleMeta bundleMeta = (BundleMeta) meta;
+        List<ItemStack> retainedItems = new ArrayList<>();
+        for(ItemStack bundledItem : bundleMeta.getItems()){
+            ItemStack retainedItem = removeEditorTools(bundledItem);
+            if(retainedItem != null && !retainedItem.getType().isAir()){
+                retainedItems.add(retainedItem);
             }
         }
-        if(identifyTool(inventory.getItemInOffHand()) != null){
-            inventory.setItemInOffHand(null);
-        }
+        bundleMeta.setItems(retainedItems);
+        item.setItemMeta(bundleMeta);
+        return item;
     }
 
     private List<String> toolLore(RegionEditorTool tool){

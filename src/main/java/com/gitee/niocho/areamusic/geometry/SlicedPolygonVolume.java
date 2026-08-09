@@ -10,6 +10,14 @@ import java.util.List;
 public final class SlicedPolygonVolume {
     private static final double EPSILON = 1.0E-7;
 
+    /**
+     * Resource limits protect configuration loading from quadratic polygon
+     * validation costs while remaining well above normal in-game ROI sizes.
+     */
+    public static final int MAX_SLICE_COUNT = 512;
+    public static final int MAX_VERTICES_PER_SLICE = 512;
+    public static final int MAX_TOTAL_VERTICES = 32768;
+
     private final List<SliceData> slices;
     private final double[] sliceHeights;
     private final double minX;
@@ -27,6 +35,8 @@ public final class SlicedPolygonVolume {
                 || source.getSlices().isEmpty()){
             throw new IllegalArgumentException("shape 必须包含至少一个 sliced_polygon 切片");
         }
+
+        validateResourceLimits(source.getSlices());
 
         List<SliceData> normalized = new ArrayList<>();
         for(RegionShapeConfig.Slice slice : source.getSlices()){
@@ -120,6 +130,9 @@ public final class SlicedPolygonVolume {
         if(slice == null || !isFinite(slice.getY())
                 || slice.getPolygon() == null || slice.getPolygon().size() < 3){
             throw new IllegalArgumentException("每个切片必须包含 y 和至少三个 Polygon 顶点");
+        }
+        if(!isIntegerBlockY(slice.getY())){
+            throw new IllegalArgumentException("切片 y 坐标必须是 32 位整数: " + slice.getY());
         }
 
         List<Point2> points = new ArrayList<>();
@@ -254,6 +267,37 @@ public final class SlicedPolygonVolume {
 
     private boolean isFinite(Double value){
         return value != null && !value.isNaN() && !value.isInfinite();
+    }
+
+    private boolean isIntegerBlockY(double value){
+        return value >= Integer.MIN_VALUE
+                && value <= Integer.MAX_VALUE
+                && Double.compare(value, Math.rint(value)) == 0;
+    }
+
+    private void validateResourceLimits(List<RegionShapeConfig.Slice> sourceSlices){
+        if(sourceSlices.size() > MAX_SLICE_COUNT){
+            throw new IllegalArgumentException("切片数量不能超过 " + MAX_SLICE_COUNT);
+        }
+
+        long totalVertices = 0L;
+        for(RegionShapeConfig.Slice slice : sourceSlices){
+            if(slice == null || slice.getPolygon() == null){
+                continue;
+            }
+            int vertices = slice.getPolygon().size();
+            if(vertices > MAX_VERTICES_PER_SLICE){
+                throw new IllegalArgumentException(
+                        "每个切片的顶点数不能超过 " + MAX_VERTICES_PER_SLICE
+                );
+            }
+            totalVertices += vertices;
+            if(totalVertices > MAX_TOTAL_VERTICES){
+                throw new IllegalArgumentException(
+                        "所有切片的顶点总数不能超过 " + MAX_TOTAL_VERTICES
+                );
+            }
+        }
     }
 
     private static final class SliceData {

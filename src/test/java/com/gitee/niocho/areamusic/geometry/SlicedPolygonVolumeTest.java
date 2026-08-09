@@ -72,6 +72,74 @@ class SlicedPolygonVolumeTest {
     }
 
     @Test
+    void rejectsNonIntegerAndOutOfRangeSliceHeights(){
+        assertThrows(IllegalArgumentException.class, () -> new SlicedPolygonVolume(
+                RegionShapeConfig.builder()
+                        .slices(Arrays.asList(slice(
+                                10.5,
+                                point(0, 0), point(2, 0), point(0, 2)
+                        )))
+                        .build()
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new SlicedPolygonVolume(
+                RegionShapeConfig.builder()
+                        .slices(Arrays.asList(slice(
+                                (double) Integer.MAX_VALUE + 1.0,
+                                point(0, 0), point(2, 0), point(0, 2)
+                        )))
+                        .build()
+        ));
+    }
+
+    @Test
+    void rejectsTooManySlices(){
+        List<RegionShapeConfig.Slice> slices = new ArrayList<>();
+        for(int index = 0; index <= SlicedPolygonVolume.MAX_SLICE_COUNT; index++){
+            slices.add(slice(
+                    index,
+                    point(0, 0), point(2, 0), point(0, 2)
+            ));
+        }
+
+        assertThrows(IllegalArgumentException.class, () -> new SlicedPolygonVolume(
+                RegionShapeConfig.builder().slices(slices).build()
+        ));
+    }
+
+    @Test
+    void rejectsTooManyVerticesInOneSlice(){
+        List<RegionShapeConfig.Point> points = repeatedPoints(
+                SlicedPolygonVolume.MAX_VERTICES_PER_SLICE + 1
+        );
+
+        assertThrows(IllegalArgumentException.class, () -> new SlicedPolygonVolume(
+                RegionShapeConfig.builder()
+                        .slices(Arrays.asList(RegionShapeConfig.Slice.builder()
+                                .y(10.0)
+                                .polygon(points)
+                                .build()))
+                        .build()
+        ));
+    }
+
+    @Test
+    void rejectsTooManyVerticesAcrossSlices(){
+        int verticesPerSlice = SlicedPolygonVolume.MAX_VERTICES_PER_SLICE;
+        int sliceCount = SlicedPolygonVolume.MAX_TOTAL_VERTICES / verticesPerSlice + 1;
+        List<RegionShapeConfig.Slice> slices = new ArrayList<>();
+        for(int index = 0; index < sliceCount; index++){
+            slices.add(RegionShapeConfig.Slice.builder()
+                    .y((double) index)
+                    .polygon(repeatedPoints(verticesPerSlice))
+                    .build());
+        }
+
+        assertThrows(IllegalArgumentException.class, () -> new SlicedPolygonVolume(
+                RegionShapeConfig.builder().slices(slices).build()
+        ));
+    }
+
+    @Test
     void selectsTheCorrectSliceAcrossManyBinarySearchLevels(){
         List<RegionShapeConfig.Slice> slices = new ArrayList<>();
         for(int index = 0; index < 128; index++){
@@ -103,5 +171,13 @@ class SlicedPolygonVolumeTest {
 
     private RegionShapeConfig.Point point(double x, double z){
         return RegionShapeConfig.Point.builder().x(x).z(z).build();
+    }
+
+    private List<RegionShapeConfig.Point> repeatedPoints(int count){
+        List<RegionShapeConfig.Point> result = new ArrayList<>();
+        for(int index = 0; index < count; index++){
+            result.add(point(index, 0));
+        }
+        return result;
     }
 }
