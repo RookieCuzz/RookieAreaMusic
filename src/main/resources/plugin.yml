@@ -3,7 +3,8 @@ version: @version@
 main: com.gitee.niocho.areamusic.RookieAreaMusic
 api-version: '1.21.4'
 prefix: RookieAreaMusic
-authors: [ niocho ]
+authors: [ niocho, RookieCuzz ]
+website: https://github.com/RookieCuzz/RookieAreaMusic
 description: "基于多边形切片区域的多频道音乐播放插件"
 softdepend: [ CraftEngine ]
 commands:

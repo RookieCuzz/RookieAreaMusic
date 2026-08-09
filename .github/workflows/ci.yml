@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build and test
+        run: mvn -B clean verify
+
+      - name: Verify Java 8 bytecode
+        shell: bash
+        run: |
+          mapfile -d '' class_files < <(find target/classes -type f -name '*.class' -print0)
+          if (( ${#class_files[@]} == 0 )); then
+            echo 'No compiled class files found.' >&2
+            exit 1
+          fi
+
+          invalid=0
+          for class_file in "${class_files[@]}"; do
+            class_name="${class_file#target/classes/}"
+            class_name="${class_name%.class}"
+            class_name="${class_name//\//.}"
+            major_version="$(javap -verbose -classpath target/classes "$class_name" \
+              | awk '/major version:/ { print $3; exit }')"
+            if [[ "$major_version" != '52' ]]; then
+              echo "$class_file has class major version $major_version (expected 52)." >&2
+              invalid=1
+            fi
+          done
+
+          exit "$invalid"
