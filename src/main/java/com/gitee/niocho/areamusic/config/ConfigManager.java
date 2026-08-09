@@ -37,6 +37,7 @@ public class ConfigManager {
     private static final int CHECK_PERIOD_TICKS = 20;
 
     private final RookieAreaMusic plugin;
+    private final Path dataRoot;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private volatile Map<String, Map<String, AreaDto>> areas;
     private volatile Map<String, MusicDto> musics;
@@ -46,6 +47,15 @@ public class ConfigManager {
 
     public ConfigManager(RookieAreaMusic plugin) {
         this.plugin = plugin;
+        this.dataRoot = plugin.getDataFolder().toPath();
+    }
+
+    ConfigManager(RookieAreaMusic plugin, Path dataRoot) {
+        this.plugin = plugin;
+        this.dataRoot = dataRoot;
+        this.areas = new ConcurrentHashMap<>();
+        this.musics = new ConcurrentHashMap<>();
+        this.soundSources = new ConcurrentHashMap<>();
     }
 
     public void load() throws IOException {
@@ -58,7 +68,6 @@ public class ConfigManager {
         validateCheckPeriod();
         PlaybackChannelRegistry loadedChannels = loadPlaybackChannels();
 
-        Path dataRoot = this.plugin.getDataFolder().toPath();
         Files.createDirectories(dataRoot);
         Map<String, Map<String, AreaDto>> loadedAreas = new ConcurrentHashMap<>();
         Map<String, MusicDto> loadedMusics = new ConcurrentHashMap<>();
@@ -82,42 +91,14 @@ public class ConfigManager {
         this.channelRegistry = loadedChannels;
     }
 
-    public void save() throws IOException {
-        this.plugin.saveConfig();
-        Path worldsRoot = this.plugin.getDataFolder().toPath().resolve(WORLDS_DIRECTORY);
-        Files.createDirectories(worldsRoot);
-
-        if(areas == null){
-            return;
-        }
-        for(Map<String, AreaDto> worldAreas : areas.values()){
-            if(worldAreas == null){
-                continue;
-            }
-            for(AreaDto area : worldAreas.values()){
-                writeRegionFiles(worldsRoot, area, musics);
-            }
-        }
-        if(soundSources != null){
-            for(Map<String, SoundSource> worldSources : soundSources.values()){
-                if(worldSources == null){
-                    continue;
-                }
-                for(SoundSource source : worldSources.values()){
-                    writeSoundSourceFile(worldsRoot, source);
-                }
-            }
-        }
-    }
-
     public void deleteRegionFiles(String worldName, String areaId) throws IOException {
-        Path worldsRoot = this.plugin.getDataFolder().toPath().resolve(WORLDS_DIRECTORY);
+        Path worldsRoot = dataRoot.resolve(WORLDS_DIRECTORY);
         Path regionDirectory = resolveRegionDirectory(worldsRoot, worldName, areaId);
         if(!Files.exists(regionDirectory)){
             return;
         }
 
-        Path trashRoot = this.plugin.getDataFolder().toPath().resolve(".deleted-regions");
+        Path trashRoot = dataRoot.resolve(".deleted-regions");
         Files.createDirectories(trashRoot);
         String backupName = System.currentTimeMillis() + "-" + safeBackupName(worldName)
                 + "-" + safeBackupName(areaId);
@@ -157,7 +138,6 @@ public class ConfigManager {
             throw new IOException("区域不存在: " + area.getWorld() + "/" + area.getAreaId());
         }
 
-        Path dataRoot = plugin.getDataFolder().toPath();
         Path worldsRoot = dataRoot.resolve(WORLDS_DIRECTORY);
         Path targetDirectory = resolveRegionDirectory(
                 worldsRoot,
@@ -179,7 +159,7 @@ public class ConfigManager {
                         area.getWorld(),
                         area.getAreaId()
                 );
-                Files.createDirectories(targetDirectory.getParent());
+                Files.createDirectories(requireParent(targetDirectory, "区域目录"));
                 try {
                     Files.move(stagedDirectory, targetDirectory, StandardCopyOption.ATOMIC_MOVE);
                 } catch (AtomicMoveNotSupportedException ignored){
@@ -199,8 +179,102 @@ public class ConfigManager {
                 .put(area.getUuid(), area);
     }
 
+    /**
+     * Atomically replaces one region's playlist without rewriting unrelated
+     * region or source files. The live maps are published only after the new
+     * music.json has been moved into place successfully.
+     */
+    public synchronized void replaceRegionMusic(String worldName,
+                                                String areaId,
+                                                List<MusicDto> requestedTracks)
+            throws IOException {
+        AreaDto area = findArea(worldName, areaId);
+        if(area == null){
+            throw new IOException("区域不存在: " + worldName + "/" + areaId);
+        }
+        if(musics == null){
+            throw new IOException("音乐配置尚未加载");
+        }
+        Map<String, AreaDto> worldAreas = areas == null
+                ? null
+                : areas.get(worldName);
+        if(worldAreas == null || worldAreas.get(area.getUuid()) != area){
+            throw new IOException("区域运行状态已变更，请重试: "
+                    + worldName + "/" + areaId);
+        }
+
+        Path worldsRoot = dataRoot.resolve(WORLDS_DIRECTORY);
+        Path regionDirectory = resolveRegionDirectory(worldsRoot, worldName, areaId);
+        if(!Files.isDirectory(regionDirectory)){
+            throw new IOException("区域目录不存在: " + regionDirectory.toAbsolutePath());
+        }
+
+        List<RegionMusicConfig.Track> fileTracks = new ArrayList<>();
+        List<MusicDto> normalizedTracks = new ArrayList<>();
+        List<String> normalizedUuids = new ArrayList<>();
+        Set<String> seenIds = new HashSet<>();
+        if(requestedTracks != null){
+            for(MusicDto requested : requestedTracks){
+                if(requested == null){
+                    throw new IOException("区域 " + areaId + " 包含空音乐条目");
+                }
+                String musicId = requested.getMusicId() == null
+                        ? null
+                        : requested.getMusicId().trim();
+                String sound = requested.getMusicURL() == null
+                        ? null
+                        : requested.getMusicURL().trim();
+                RegionMusicConfig.Track fileTrack = RegionMusicConfig.Track.builder()
+                        .id(musicId)
+                        .sound(sound)
+                        .duration(requested.getMusicDuration())
+                        .build();
+                validateTrack(fileTrack, regionDirectory.resolve(MUSIC_FILE));
+                if(!seenIds.add(musicId)){
+                    throw new IOException("区域 " + areaId + " 存在重复音乐 ID: " + musicId);
+                }
+
+                String uuid = createTrackUuid(worldName, areaId, musicId);
+                fileTracks.add(fileTrack);
+                normalizedUuids.add(uuid);
+                normalizedTracks.add(MusicDto.builder()
+                        .uuid(uuid)
+                        .musicId(musicId)
+                        .musicURL(sound)
+                        .musicDuration(requested.getMusicDuration())
+                        .build());
+            }
+        }
+
+        writeJsonAtomically(
+                regionDirectory.resolve(MUSIC_FILE),
+                RegionMusicConfig.builder().music(fileTracks).build()
+        );
+
+        Set<String> retained = new HashSet<>(normalizedUuids);
+        List<String> previousUuids = area.getMusicId() == null
+                ? java.util.Collections.emptyList()
+                : new ArrayList<>(area.getMusicId());
+        AreaDto replacement = copyAreaWithMusic(area, normalizedUuids);
+        for(MusicDto track : normalizedTracks){
+            musics.put(track.getUuid(), track);
+        }
+        // RuntimeState snapshots retain AreaDto references in their spatial
+        // indexes. Publish a replacement instead of mutating the old object so
+        // an in-flight scan always sees a self-consistent area/music snapshot.
+        worldAreas.put(area.getUuid(), replacement);
+        for(String previousUuid : previousUuids){
+            if(!retained.contains(previousUuid)){
+                musics.remove(previousUuid);
+            }
+        }
+    }
+
     public void unload() throws IOException {
-        this.save();
+        // Region and source files are persisted transactionally at mutation
+        // time (or managed directly by administrators). Rewriting the whole
+        // tree during shutdown could leave unrelated files partially updated.
+        this.plugin.saveConfig();
     }
 
     public int getCheckPeriod(){
@@ -259,7 +333,7 @@ public class ConfigManager {
         }
 
         for(Path worldDirectory : listDirectories(worldsRoot)){
-            String worldName = worldDirectory.getFileName().toString();
+            String worldName = requireFileName(worldDirectory, "世界目录");
             Path regionsRoot = worldDirectory.resolve(REGIONS_DIRECTORY);
             if(!Files.exists(regionsRoot)){
                 continue;
@@ -286,13 +360,13 @@ public class ConfigManager {
         }
 
         for(Path worldDirectory : listDirectories(worldsRoot)){
-            String worldName = worldDirectory.getFileName().toString();
+            String worldName = requireFileName(worldDirectory, "世界目录");
             Path sourcesRoot = worldDirectory.resolve(SOURCES_DIRECTORY);
             if(!Files.exists(sourcesRoot)){
                 continue;
             }
             for(Path sourceFile : listJsonFiles(sourcesRoot)){
-                String fileName = sourceFile.getFileName().toString();
+                String fileName = requireFileName(sourceFile, "音源配置文件");
                 String sourceId = fileName.substring(
                         0,
                         fileName.length() - ".json".length()
@@ -322,7 +396,7 @@ public class ConfigManager {
                             Map<String, Map<String, AreaDto>> loadedAreas,
                             Map<String, MusicDto> loadedMusics,
                             PlaybackChannelRegistry channels) throws IOException {
-        String areaId = regionDirectory.getFileName().toString();
+        String areaId = requireFileName(regionDirectory, "区域目录");
         RegionAreaConfig areaConfig = readJson(
                 regionDirectory.resolve(AREA_FILE),
                 RegionAreaConfig.class,
@@ -446,53 +520,6 @@ public class ConfigManager {
                 .build();
     }
 
-    private void writeSoundSourceFile(Path worldsRoot,
-                                      SoundSource source) throws IOException {
-        if(source == null){
-            return;
-        }
-        validateSourceId(
-                source.getSourceId(),
-                worldsRoot.resolve(source.getSourceId() + ".json")
-        );
-        Path normalizedRoot = worldsRoot.toAbsolutePath().normalize();
-        Path worldDirectory = resolveSingleSegment(
-                normalizedRoot,
-                source.getWorldName(),
-                "世界"
-        );
-        Path sourcesRoot = worldDirectory.resolve(SOURCES_DIRECTORY).normalize();
-        Files.createDirectories(sourcesRoot);
-        Path sourceFile = sourcesRoot.resolve(
-                source.getSourceId() + ".json"
-        ).normalize();
-        if(!sourceFile.getParent().equals(sourcesRoot)){
-            throw new IOException("音源 ID 不能包含路径分隔符: "
-                    + source.getSourceId());
-        }
-
-        SoundSourceConfig config = SoundSourceConfig.builder()
-                .position(SoundSourceConfig.Position.builder()
-                        .x(source.getX())
-                        .y(source.getY())
-                        .z(source.getZ())
-                        .build())
-                .sound(source.getSoundKey())
-                .duration(source.getDurationSeconds())
-                .interval(source.getIntervalSeconds())
-                .volume(source.getVolume())
-                .pitch(source.getPitch())
-                .enabled(source.isEnabled())
-                .build();
-        validateAndCreateSoundSource(
-                source.getWorldName(),
-                source.getSourceId(),
-                config,
-                sourceFile
-        );
-        writeJsonAtomically(sourceFile, config);
-    }
-
     private Path resolveRegionDirectory(Path worldsRoot,
                                         String worldName,
                                         String areaId) throws IOException {
@@ -507,7 +534,8 @@ public class ConfigManager {
             throw new IOException(label + "名称无效: " + value);
         }
         Path resolved = parent.resolve(value).toAbsolutePath().normalize();
-        if(resolved.getParent() == null || !resolved.getParent().equals(parent.toAbsolutePath().normalize())){
+        Path resolvedParent = resolved.getParent();
+        if(resolvedParent == null || !resolvedParent.equals(parent.toAbsolutePath().normalize())){
             throw new IOException(label + "名称不能包含路径分隔符: " + value);
         }
         return resolved;
@@ -668,11 +696,11 @@ public class ConfigManager {
         normalizeAndValidatePlaybackSettings(
                 config,
                 channelRegistry,
-                this.plugin.getDataFolder().toPath().resolve("runtime-area")
+                dataRoot.resolve("runtime-area")
         );
         return validateAndCreateVolume(
                 config,
-                this.plugin.getDataFolder().toPath().resolve("runtime-area")
+                dataRoot.resolve("runtime-area")
         );
     }
 
@@ -788,9 +816,11 @@ public class ConfigManager {
         }
     }
 
-    private void writeJsonAtomically(Path file, Object value) throws IOException {
-        Files.createDirectories(file.getParent());
-        Path temp = Files.createTempFile(file.getParent(), file.getFileName().toString(), ".tmp");
+    void writeJsonAtomically(Path file, Object value) throws IOException {
+        Path parent = requireParent(file, "JSON 配置文件");
+        String fileName = requireFileName(file, "JSON 配置文件");
+        Files.createDirectories(parent);
+        Path temp = Files.createTempFile(parent, fileName, ".tmp");
         try {
             try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
                 gson.toJson(value, writer);
@@ -853,7 +883,7 @@ public class ConfigManager {
     private List<Path> listJsonFiles(Path parent) throws IOException {
         try (Stream<Path> paths = Files.list(parent)){
             return paths.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .filter(this::hasJsonFileName)
                     .sorted()
                     .collect(Collectors.toList());
         }
@@ -865,6 +895,60 @@ public class ConfigManager {
             source.append('\u0000').append(part);
         }
         return UUID.nameUUIDFromBytes(source.toString().getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private Path requireParent(Path path, String label) throws IOException {
+        Path parent = path == null ? null : path.getParent();
+        if(parent == null){
+            throw new IOException(label + "缺少父目录: " + path);
+        }
+        return parent;
+    }
+
+    private String requireFileName(Path path, String label) throws IOException {
+        Path fileName = path == null ? null : path.getFileName();
+        if(fileName == null){
+            throw new IOException(label + "缺少文件名: " + path);
+        }
+        return fileName.toString();
+    }
+
+    private boolean hasJsonFileName(Path path){
+        Path fileName = path == null ? null : path.getFileName();
+        return fileName != null && fileName.toString().endsWith(".json");
+    }
+
+    private AreaDto copyAreaWithMusic(AreaDto source,
+                                      List<String> musicUuids){
+        return AreaDto.builder()
+                .world(source.getWorld())
+                .uuid(source.getUuid())
+                .areaId(source.getAreaId())
+                .musicId(new CopyOnWriteArrayList<>(musicUuids))
+                .channel(source.getChannel())
+                .order(source.getOrder())
+                .priority(source.getPriority())
+                .random(source.getRandom())
+                .loop(source.getLoop())
+                .enabled(source.getEnabled())
+                .overWrite(source.getOverWrite())
+                .volume(source.getVolume())
+                .pitch(source.getPitch())
+                .shape(source.getShape())
+                .minPoint(copyPoint(source.getMinPoint()))
+                .maxPoint(copyPoint(source.getMaxPoint()))
+                .build();
+    }
+
+    private AreaDto.Point copyPoint(AreaDto.Point source){
+        if(source == null){
+            return null;
+        }
+        return AreaDto.Point.builder()
+                .x(source.getX())
+                .y(source.getY())
+                .z(source.getZ())
+                .build();
     }
 
     private String safeBackupName(String value){

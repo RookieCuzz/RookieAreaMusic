@@ -2,7 +2,6 @@ package com.gitee.niocho.areamusic.command;
 
 import com.gitee.niocho.areamusic.RookieAreaMusic;
 import com.gitee.niocho.areamusic.config.AreaDto;
-import com.gitee.niocho.areamusic.config.ConfigManager;
 import com.gitee.niocho.areamusic.config.MusicDto;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
@@ -16,7 +15,6 @@ import org.bukkit.entity.Player;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 
 public class MainExecutor implements CommandExecutor {
@@ -109,30 +107,20 @@ public class MainExecutor implements CommandExecutor {
                 sender.sendMessage("\u00A7c[RookieAreaMusic] 未找到区域 " + worldName + "/" + areaId);
                 return true;
             }
-            if(area.getMusicId() == null){
-                area.setMusicId(new CopyOnWriteArrayList<>());
-            }
-            for(String musicUuid : area.getMusicId()){
-                MusicDto existing = plugin.getConfigManager().getMusics().get(musicUuid);
+            List<MusicDto> updatedTracks = copyRegionMusic(area);
+            for(MusicDto existing : updatedTracks){
                 if(existing != null && existing.getMusicId().equals(musicId)){
                     sender.sendMessage("\u00A7c[RookieAreaMusic] 该区域已经存在音乐 " + musicId);
                     return true;
                 }
             }
 
-            String uuid = ConfigManager.createTrackUuid(worldName, areaId, musicId);
-            Map<String, MusicDto> musics = this.plugin.getConfigManager().getMusics();
-            musics.put(uuid, MusicDto.builder()
-                    .uuid(uuid)
+            updatedTracks.add(MusicDto.builder()
                     .musicId(musicId)
                     .musicURL(musicURL)
                     .musicDuration(duration)
                     .build());
-            area.getMusicId().add(uuid);
-            if(!persistChanges(sender, () -> {
-                musics.remove(uuid);
-                area.getMusicId().remove(uuid);
-            })){
+            if(!replaceRegionMusic(sender, worldName, areaId, updatedTracks)){
                 return true;
             }
             plugin.rebuildSpatialIndex();
@@ -141,6 +129,9 @@ public class MainExecutor implements CommandExecutor {
             return true;
         } catch (NumberFormatException e){
             sender.sendMessage("\u00A7c[RookieAreaMusic] 输入的 musicDuration 无效");
+            return true;
+        } catch (IOException e){
+            reportSaveFailure(sender, e);
             return true;
         }
     }
@@ -179,14 +170,16 @@ public class MainExecutor implements CommandExecutor {
             return true;
         }
 
+        List<MusicDto> updatedTracks;
+        try {
+            updatedTracks = copyRegionMusic(area);
+        } catch (IOException e){
+            reportSaveFailure(sender, e);
+            return true;
+        }
         final String removedUuid = matchedUuid;
-        final int removedIndex = area.getMusicId().indexOf(removedUuid);
-        MusicDto removedMusic = plugin.getConfigManager().getMusics().remove(removedUuid);
-        area.getMusicId().remove(removedUuid);
-        if(!persistChanges(sender, () -> {
-            plugin.getConfigManager().getMusics().put(removedUuid, removedMusic);
-            area.getMusicId().add(removedIndex, removedUuid);
-        })){
+        updatedTracks.removeIf(track -> removedUuid.equals(track.getUuid()));
+        if(!replaceRegionMusic(sender, worldName, areaId, updatedTracks)){
             return true;
         }
         plugin.rebuildSpatialIndex();
@@ -476,16 +469,43 @@ public class MainExecutor implements CommandExecutor {
         return true;
     }
 
-    private boolean persistChanges(CommandSender sender, Runnable rollback){
+    private List<MusicDto> copyRegionMusic(AreaDto area) throws IOException {
+        List<MusicDto> result = new ArrayList<>();
+        if(area.getMusicId() == null){
+            return result;
+        }
+        for(String musicUuid : area.getMusicId()){
+            MusicDto music = plugin.getConfigManager().getMusics().get(musicUuid);
+            if(music == null){
+                throw new IOException("区域 " + area.getAreaId()
+                        + " 引用了不存在的音乐: " + musicUuid);
+            }
+            result.add(music);
+        }
+        return result;
+    }
+
+    private boolean replaceRegionMusic(CommandSender sender,
+                                       String worldName,
+                                       String areaId,
+                                       List<MusicDto> tracks){
         try {
-            plugin.getConfigManager().save();
+            plugin.getConfigManager().replaceRegionMusic(worldName, areaId, tracks);
             return true;
         } catch (IOException e){
-            rollback.run();
-            plugin.getLogger().log(Level.SEVERE, "RookieAreaMusic 配置保存失败，内存修改已回滚", e);
-            sender.sendMessage("\u00A7c[RookieAreaMusic] 保存失败，修改已回滚: " + getErrorMessage(e));
+            reportSaveFailure(sender, e);
             return false;
         }
+    }
+
+    private void reportSaveFailure(CommandSender sender, IOException error){
+        plugin.getLogger().log(
+                Level.SEVERE,
+                "RookieAreaMusic 区域音乐保存失败，内存与现有文件均未修改",
+                error
+        );
+        sender.sendMessage("\u00A7c[RookieAreaMusic] 保存失败，未应用修改: "
+                + getErrorMessage(error));
     }
 
     private String getErrorMessage(Throwable throwable){
