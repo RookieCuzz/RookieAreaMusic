@@ -23,14 +23,28 @@ public final class PlayerTaskCoordinator {
         if(playerUuid == null || task == null){
             return false;
         }
-        PlayerState state = state(playerUuid);
+        PlayerState state = states.get(playerUuid);
+        if(state == null){
+            return false;
+        }
         synchronized (state.monitor){
-            if(state.revision.get() != revision){
+            if(states.get(playerUuid) != state
+                    || state.revision.get() != revision){
                 return false;
             }
             task.run();
             return true;
         }
+    }
+
+    public boolean isCurrent(UUID playerUuid, long revision){
+        if(playerUuid == null){
+            return false;
+        }
+        PlayerState state = states.get(playerUuid);
+        return state != null
+                && states.get(playerUuid) == state
+                && state.revision.get() == revision;
     }
 
     public void runSerialized(UUID playerUuid, Runnable task){

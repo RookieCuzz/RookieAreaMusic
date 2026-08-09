@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -55,6 +56,90 @@ class SoundSourcePlaybackEngineTest {
         assertEquals(2, played.size());
     }
 
+    @Test
+    void failedPlaybackRetriesWithoutWaitingForTheFullTrackDuration(){
+        SoundSourcePlaybackEngine engine = new SoundSourcePlaybackEngine();
+        List<SoundSource> played = new ArrayList<>();
+        AtomicBoolean available = new AtomicBoolean();
+        SoundSource birds = source("birds", "ambient.birds", 60, 0, true);
+
+        engine.tick(Collections.singletonList(birds), 0, source -> available.get());
+        engine.tick(Collections.singletonList(birds), 999, source -> available.get());
+        available.set(true);
+        engine.tick(Collections.singletonList(birds), 1000, source -> {
+            played.add(source);
+            return true;
+        });
+
+        assertEquals(1, played.size());
+    }
+
+    @Test
+    void removingOneSharedKeyStopsAndRestartsTheRemainingSource(){
+        SoundSourcePlaybackEngine engine = new SoundSourcePlaybackEngine();
+        RecordingSourceSink sink = new RecordingSourceSink();
+        SoundSource first = source("first", "ambient.wind", 60, 0, true);
+        SoundSource second = source("second", "ambient.wind", 60, 0, true);
+
+        engine.tick(Arrays.asList(first, second), 0, sink);
+        assertEquals(2, sink.played.size());
+
+        engine.tick(Collections.singletonList(second), 1000, sink);
+
+        assertEquals(1, sink.stopped.size());
+        assertEquals(3, sink.played.size());
+        assertEquals("second", sink.played.get(2).getSourceId());
+    }
+
+    @Test
+    void removingExpiredShortSourceDoesNotInterruptLongSharedKeySource(){
+        SoundSourcePlaybackEngine engine = new SoundSourcePlaybackEngine();
+        RecordingSourceSink sink = new RecordingSourceSink();
+        SoundSource shortSource = source("short", "ambient.wind", 1, 30, true);
+        SoundSource longSource = source("long", "ambient.wind", 60, 0, true);
+
+        engine.tick(Arrays.asList(shortSource, longSource), 0, sink);
+        engine.tick(Collections.singletonList(longSource), 2000, sink);
+
+        assertEquals(0, sink.stopped.size());
+        assertEquals(2, sink.played.size());
+    }
+
+    @Test
+    void interruptedSharedKeyDoesNotRestartSourceDuringItsSilentInterval(){
+        SoundSourcePlaybackEngine engine = new SoundSourcePlaybackEngine();
+        RecordingSourceSink sink = new RecordingSourceSink();
+        SoundSource removed = source("removed", "ambient.wind", 60, 0, true);
+        SoundSource interval = source("interval", "ambient.wind", 1, 9, true);
+
+        engine.tick(Arrays.asList(removed, interval), 0, sink);
+        engine.tick(Collections.singletonList(interval), 2000, sink);
+
+        assertEquals(1, sink.stopped.size());
+        assertEquals(2, sink.played.size());
+
+        engine.tick(Collections.singletonList(interval), 9999, sink);
+        assertEquals(2, sink.played.size());
+
+        engine.tick(Collections.singletonList(interval), 10000, sink);
+        assertEquals(3, sink.played.size());
+        assertEquals("interval", sink.played.get(2).getSourceId());
+    }
+
+    @Test
+    void clearStopsEachWorldAndSoundKeyOnce(){
+        SoundSourcePlaybackEngine engine = new SoundSourcePlaybackEngine();
+        RecordingSourceSink sink = new RecordingSourceSink();
+        SoundSource first = source("first", "ambient.wind", 60, 0, true);
+        SoundSource second = source("second", "ambient.wind", 60, 0, true);
+
+        engine.tick(Arrays.asList(first, second), 0, sink);
+        engine.clear(sink);
+
+        assertEquals(1, sink.stopped.size());
+        assertEquals(0, engine.size());
+    }
+
     private SoundSource source(String id,
                                String sound,
                                long duration,
@@ -74,5 +159,21 @@ class SoundSourcePlaybackEngineTest {
                 1.0f,
                 enabled
         );
+    }
+
+    private static final class RecordingSourceSink implements SoundSourceSink {
+        private final List<SoundSource> played = new ArrayList<>();
+        private final List<SoundSource> stopped = new ArrayList<>();
+
+        @Override
+        public boolean play(SoundSource source) {
+            played.add(source);
+            return true;
+        }
+
+        @Override
+        public void stop(SoundSource source) {
+            stopped.add(source);
+        }
     }
 }

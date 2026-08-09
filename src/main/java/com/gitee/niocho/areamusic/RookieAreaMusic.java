@@ -21,6 +21,7 @@ import com.gitee.niocho.areamusic.spatial.PlayerRegionCache;
 import com.gitee.niocho.areamusic.spatial.RegionSpatialIndex;
 import com.gitee.niocho.areamusic.source.SoundSource;
 import com.gitee.niocho.areamusic.source.SoundSourcePlaybackEngine;
+import com.gitee.niocho.areamusic.source.SoundSourceSink;
 import com.gitee.niocho.areamusic.utils.MusicUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -63,6 +64,17 @@ public final class RookieAreaMusic extends JavaPlugin {
             new PlayerTaskCoordinator();
     private final SoundSourcePlaybackEngine soundSourcePlaybackEngine =
             new SoundSourcePlaybackEngine();
+    private final SoundSourceSink soundSourceSink = new SoundSourceSink() {
+        @Override
+        public boolean play(SoundSource source) {
+            return playSoundSource(source);
+        }
+
+        @Override
+        public void stop(SoundSource source) {
+            stopSoundSource(source);
+        }
+    };
     private final ConcurrentMap<UUID, PlayerPlaybackSession> playbackSessions =
             new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, PlayerOutputQueue> outputQueues =
@@ -175,7 +187,7 @@ public final class RookieAreaMusic extends JavaPlugin {
         resourcePackReloadRevisions.clear();
         pendingPlaybackRestarts.clear();
         playbackSequenceTracker.clearAll();
-        soundSourcePlaybackEngine.clear();
+        soundSourcePlaybackEngine.clear(soundSourceSink);
         playerRegionCache.clearAll();
         playerTaskCoordinator.clear();
         playerScanRunning.set(false);
@@ -372,6 +384,11 @@ public final class RookieAreaMusic extends JavaPlugin {
                 playerUuid,
                 ignored -> new PlayerOutputQueue()
         );
+        // A task which passed runIfCurrent owns the per-player monitor until
+        // this delta has been enqueued. Newer accepted tasks run afterwards
+        // and append their deltas in FIFO order. Dropping an already-computed
+        // delta here would advance the logical session without updating the
+        // client, leaving the two states permanently inconsistent.
         queue.operations.addAll(operations);
         scheduleOutputDrain(playerUuid, queue);
     }
@@ -426,14 +443,14 @@ public final class RookieAreaMusic extends JavaPlugin {
         soundSourcePlaybackEngine.tick(
                 state.getSoundSources(),
                 System.currentTimeMillis(),
-                this::playSoundSource
+                soundSourceSink
         );
     }
 
-    private void playSoundSource(SoundSource source){
+    private boolean playSoundSource(SoundSource source){
         org.bukkit.World world = Bukkit.getWorld(source.getWorldName());
         if(world == null){
-            return;
+            return false;
         }
         try {
             world.playSound(
@@ -448,6 +465,7 @@ public final class RookieAreaMusic extends JavaPlugin {
                     source.getVolume(),
                     source.getPitch()
             );
+            return true;
         } catch (RuntimeException e){
             getLogger().log(
                     Level.WARNING,
@@ -455,6 +473,30 @@ public final class RookieAreaMusic extends JavaPlugin {
                             + "/" + source.getSourceId(),
                     e
             );
+            return false;
+        }
+    }
+
+    private void stopSoundSource(SoundSource source){
+        org.bukkit.World world = Bukkit.getWorld(source.getWorldName());
+        if(world == null){
+            return;
+        }
+        for(Player player : world.getPlayers()){
+            try {
+                player.stopSound(
+                        source.getSoundKey(),
+                        org.bukkit.SoundCategory.AMBIENT
+                );
+            } catch (RuntimeException e){
+                getLogger().log(
+                        Level.WARNING,
+                        "音源停止失败: " + source.getWorldName()
+                                + "/" + source.getSourceId()
+                                + " -> " + player.getUniqueId(),
+                        e
+                );
+            }
         }
     }
 
@@ -612,14 +654,17 @@ public final class RookieAreaMusic extends JavaPlugin {
         for(PlaybackOperation operation : operations){
             try {
                 if(operation.getType() == PlaybackOperation.Type.STOP){
-                    player.stopSound(operation.getSoundKey());
+                    player.stopSound(
+                            operation.getSoundKey(),
+                            org.bukkit.SoundCategory.MUSIC
+                    );
                     continue;
                 }
                 SelectedTrack track = operation.getTrack();
-                Location location = player.getLocation();
                 player.playSound(
-                        location,
+                        player,
                         track.getSoundKey(),
+                        org.bukkit.SoundCategory.MUSIC,
                         track.getVolume(),
                         track.getPitch()
                 );

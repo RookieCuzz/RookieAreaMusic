@@ -1,6 +1,7 @@
 package com.gitee.niocho.areamusic.player;
 
 import org.bukkit.Location;
+import org.bukkit.World;
 
 /**
  * Immutable location data captured by a Bukkit event before async processing.
@@ -22,11 +23,15 @@ public final class PlayerLocationSnapshot {
     }
 
     public static PlayerLocationSnapshot from(Location location){
-        if(location == null || location.getWorld() == null){
+        if(location == null){
+            return null;
+        }
+        World world = location.getWorld();
+        if(world == null){
             return null;
         }
         return new PlayerLocationSnapshot(
-                location.getWorld().getName(),
+                world.getName(),
                 location.getX(),
                 location.getY(),
                 location.getZ()
