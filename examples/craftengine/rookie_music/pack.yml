@@ -1,0 +1,5 @@
+author: RookieAreaMusic
+version: 1.0.0
+description: Multi-channel sounds for RookieAreaMusic
+namespace: rookie_music
+enable: true

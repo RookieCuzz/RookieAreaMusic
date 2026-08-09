@@ -1,0 +1,13 @@
+{
+  "position": {
+    "x": 128.5,
+    "y": 72.5,
+    "z": 144.5
+  },
+  "sound": "rookie_music:source.tree_birds",
+  "duration": 6,
+  "interval": 12,
+  "volume": 1.0,
+  "pitch": 1.0,
+  "enabled": true
+}

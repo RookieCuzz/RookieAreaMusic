@@ -1,0 +1,10 @@
+{
+  "music": [
+    {
+      "id": "boss_enter",
+      "sound": "rookie_music:stinger.boss_enter",
+      "duration": 12
+    }
+  ]
+}
+

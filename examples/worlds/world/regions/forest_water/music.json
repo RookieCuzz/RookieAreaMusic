@@ -1,0 +1,10 @@
+{
+  "music": [
+    {
+      "id": "river_water",
+      "sound": "rookie_music:ambience.river_water",
+      "duration": 90
+    }
+  ]
+}
+

@@ -1,0 +1,85 @@
+# Sound Event 写在冒号左边；OGG 路径写在 name 中。
+# name: rookie_music:music/example 对应：
+# resourcepack/assets/rookie_music/sounds/music/example.ogg
+sounds:
+  # 长 BGM：流式读取，并扩大衰减距离，避免玩家移动后很快离开起播点。
+  rookie_music:bgm.overworld_day:
+    sounds:
+      - name: rookie_music:music/overworld_day
+        volume: 1.0
+        pitch: 1.0
+        stream: true
+        attenuation_distance: 256
+
+  rookie_music:bgm.overworld_night:
+    sounds:
+      - name: rookie_music:music/overworld_night
+        stream: true
+        attenuation_distance: 256
+
+  rookie_music:bgm.boss:
+    sounds:
+      - name: rookie_music:music/boss_phase_1
+        weight: 3
+        stream: true
+        attenuation_distance: 256
+      - name: rookie_music:music/boss_phase_2
+        weight: 1
+        stream: true
+        attenuation_distance: 256
+
+  # Ambience 可以由多个相互重叠的 RookieAreaMusic 区域同时持有。
+  rookie_music:ambience.forest_wind:
+    sounds:
+      - name: rookie_music:ambience/forest_wind_1
+        weight: 3
+        volume: 0.8
+        stream: true
+        attenuation_distance: 128
+      - name: rookie_music:ambience/forest_wind_2
+        weight: 1
+        volume: 0.8
+        stream: true
+        attenuation_distance: 128
+
+  rookie_music:ambience.forest_birds:
+    sounds:
+      - name: rookie_music:ambience/forest_birds
+        volume: 0.85
+        attenuation_distance: 96
+
+  rookie_music:ambience.river_water:
+    sounds:
+      - name: rookie_music:ambience/river_water
+        volume: 0.8
+        stream: true
+        attenuation_distance: 128
+
+  # 短入场音：预加载可减少第一次播放时的迟滞。
+  rookie_music:stinger.boss_enter:
+    sounds:
+      - name: rookie_music:stinger/boss_enter
+        preload: true
+        attenuation_distance: 64
+
+  # 固定坐标音源：建议使用单声道 OGG 和较小衰减距离。
+  rookie_music:source.tree_birds:
+    sounds:
+      - name: rookie_music:source/tree_birds_1
+        weight: 3
+        attenuation_distance: 32
+      - name: rookie_music:source/tree_birds_2
+        weight: 2
+        pitch: 1.05
+        attenuation_distance: 32
+
+  rookie_music:source.waterfall:
+    sounds:
+      - name: rookie_music:source/waterfall
+        stream: true
+        attenuation_distance: 48
+
+  rookie_music:source.campfire:
+    sounds:
+      - name: rookie_music:source/campfire
+        attenuation_distance: 24

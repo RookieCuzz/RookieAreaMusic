@@ -1,0 +1,10 @@
+{
+  "music": [
+    {
+      "id": "forest_birds",
+      "sound": "rookie_music:ambience.forest_birds",
+      "duration": 45
+    }
+  ]
+}
+

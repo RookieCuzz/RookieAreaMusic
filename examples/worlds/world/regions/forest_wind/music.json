@@ -1,0 +1,10 @@
+{
+  "music": [
+    {
+      "id": "forest_wind",
+      "sound": "rookie_music:ambience.forest_wind",
+      "duration": 120
+    }
+  ]
+}
+

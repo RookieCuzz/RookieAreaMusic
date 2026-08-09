@@ -1,0 +1,35 @@
+{
+  "channel": "stinger",
+  "order": 0,
+  "priority": "HIGH",
+  "random": false,
+  "loop": false,
+  "enabled": true,
+  "overwrite": false,
+  "volume": 1.0,
+  "pitch": 1.0,
+  "shape": {
+    "type": "sliced_polygon",
+    "slices": [
+      {
+        "y": 60.0,
+        "polygon": [
+          { "x": 150.0, "z": 120.0 },
+          { "x": 160.0, "z": 120.0 },
+          { "x": 160.0, "z": 180.0 },
+          { "x": 150.0, "z": 180.0 }
+        ]
+      },
+      {
+        "y": 100.0,
+        "polygon": [
+          { "x": 150.0, "z": 120.0 },
+          { "x": 160.0, "z": 120.0 },
+          { "x": 160.0, "z": 180.0 },
+          { "x": 150.0, "z": 180.0 }
+        ]
+      }
+    ]
+  }
+}
+

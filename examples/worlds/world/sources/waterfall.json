@@ -1,0 +1,14 @@
+{
+  "position": {
+    "x": 160.5,
+    "y": 68.5,
+    "z": 152.5
+  },
+  "sound": "rookie_music:source.waterfall",
+  "duration": 24,
+  "interval": 0,
+  "volume": 1.5,
+  "pitch": 1.0,
+  "enabled": true
+}
+
