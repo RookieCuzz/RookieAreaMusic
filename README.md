@@ -26,7 +26,7 @@ RookieAreaMusic 是面向 Paper 1.21.4 的区域音乐插件，Bukkit 加载名�
 
 ## 安装
 
-1. 把 `target/RookieAreaMusic-1.0-SNAPSHOT.jar` 放入 Paper 1.21.4 的 `plugins/`。
+1. 把 `target/RookieAreaMusic-1.0.0.jar` 放入 Paper 1.21.4 的 `plugins/`。
 2. 如需自定义 OGG，同时安装 CraftEngine，并部署 `examples/craftengine/rookie_music/` 模板。
 3. 启动服务器，确认控制台出现 `RookieAreaMusic` 启用信息。
 4. 修改配置后执行 `/am reload`；修改 CraftEngine 资源时先执行 `/ce reload all`。
@@ -111,7 +111,7 @@ mvn clean test
 mvn package
 ```
 
-产物：`target/RookieAreaMusic-1.0-SNAPSHOT.jar`。
+产物：`target/RookieAreaMusic-1.0.0.jar`。
 
 当前测试覆盖切片几何与资源上限、编辑会话、空间索引、异步 revision、频道选择、BGM 覆盖、Ambience 层数与补位、Stinger、共享声音引用、循环策略和固定音源生命周期。
 

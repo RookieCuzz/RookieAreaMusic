@@ -6,7 +6,7 @@
 
     <groupId>com.gitee.niocho</groupId>
     <artifactId>RookieAreaMusic</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <packaging>jar</packaging>
 
     <name>RookieAreaMusic</name>
