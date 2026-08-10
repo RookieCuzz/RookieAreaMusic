@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.gitee.niocho</groupId>
+    <groupId>io.github.rookiecuzz</groupId>
     <artifactId>RookieAreaMusic</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>RookieAreaMusic</name>
@@ -22,12 +22,6 @@
     </licenses>
 
     <developers>
-        <developer>
-            <name>Niocho</name>
-            <roles>
-                <role>Original author</role>
-            </roles>
-        </developer>
         <developer>
             <id>RookieCuzz</id>
             <name>RookieCuzz</name>
