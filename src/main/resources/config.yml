@@ -3,6 +3,11 @@ engine:
   # 单位：tick；20 ticks 约等于 1 秒。
   checkPeriod: 20
 
+actions:
+  commands:
+    # Stinger / enter_once 区域的 enterCommands / exitCommands 总开关。
+    enabled: true
+
 channels:
   bgm:
     mode: exclusive

@@ -1,18 +1,18 @@
 name: RookieAreaMusic
 version: @version@
-main: com.gitee.niocho.areamusic.RookieAreaMusic
+main: io.github.rookiecuzz.rookieareamusic.RookieAreaMusic
 api-version: '1.21.4'
 prefix: RookieAreaMusic
-authors: [ niocho, RookieCuzz ]
+authors: [ RookieCuzz ]
 website: https://github.com/RookieCuzz/RookieAreaMusic
 description: "基于多边形切片区域的多频道音乐播放插件"
-softdepend: [ CraftEngine ]
+softdepend: [ CraftEngine, PlaceholderAPI ]
 commands:
   am:
     description: 管理区域音乐、CT 切片区域和播放配置
     usage: /am <music|area|reload|help>
-    permission: area-music.admin
+    permission: rookieareamusic.admin
 permissions:
-  area-music.admin:
+  rookieareamusic.admin:
     description: Allows management of RookieAreaMusic
     default: op

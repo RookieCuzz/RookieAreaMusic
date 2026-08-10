@@ -32,6 +32,8 @@ plugins/RookieAreaMusic/
   "overwrite": true,
   "volume": 1.0,
   "pitch": 1.0,
+  "enterCommands": [],
+  "exitCommands": [],
   "shape": {
     "type": "sliced_polygon",
     "slices": [
@@ -123,9 +125,13 @@ Y=100     使用 Y=100 的三角形
 
 ## 播放频道
 
-频道在 `config.yml` 中统一声明：
+频道与区域动作命令总开关在 `config.yml` 中统一声明：
 
 ```yaml
+actions:
+  commands:
+    enabled: true
+
 channels:
   bgm:
     mode: exclusive
@@ -146,9 +152,72 @@ channels:
 - `continuous`：区域持续有效；曲目到期后，只有 `loop: true` 才选择下一首。
 - `enter_once`：只在从区域外进入区域内时触发并忽略 `loop`。因层数限制被压制后，必须离开再进入才会触发。
 
+`actions.commands.enabled: false` 会关闭全部 `enterCommands` 与 `exitCommands`。关闭期间的动作不会排队或延迟补执行；重新开启后，玩家需要离开并重新进入区域才会建立新的配对动作。
+
 可增加自定义频道。名称只能包含小写字母、数字、点、下划线和连字符。未知频道、非法模式、非法触发器或非法层数会使整次 `/am reload` 失败，旧运行配置继续生效。
 
 相同玩家的相同 Sound Event 只实际播放一次。多个区域共同持有引用，最后一个引用离开后才执行 `stopSound`。
+
+## 入场与离场命令动作
+
+区域可通过 `area.json` 的可选 `enterCommands` 与 `exitCommands` 数组，在玩家进入及其配对离开时调用原版命令或服务端已注册的其他插件命令：
+
+```json
+{
+  "channel": "stinger",
+  "enterCommands": [
+    "title {player} title {\"text\":\"发现 Boss 区域\",\"color\":\"dark_red\"}",
+    "/tag {player} add discovered_{area_id}",
+    "effect give {player} minecraft:glowing 5 0 true"
+  ],
+  "exitCommands": [
+    "tag {player} remove discovered_{area_id}",
+    "effect clear {player} minecraft:glowing"
+  ]
+}
+```
+
+### 触发语义
+
+- 非空 `enterCommands` 或 `exitCommands` 只允许用于 `trigger: enter_once` 的频道；在 `continuous` 频道中配置任一数组都会使加载或 `/am reload` 失败。字段缺失或为 `null` 时按空数组处理。
+- 只有区域由“未命中”变为“命中”，并且该区域在频道排序与 `maxLayers` 限制后实际入选层位时，才执行命令。默认 Stinger 同时最多触发两层；被压制的区域必须离开再进入，不会因后来出现空位而延迟补触发。
+- 只有某次物理进入真正入选、且至少一条 `enterCommands` 在主线程获得 Bukkit 的成功派发结果，插件才登记 activation token。随后走出、传送离开、切换世界或重载后不再命中该区域时，会消费同一 token 并执行一次入场时冻结的 `exitCommands`。如果所有入场命令都失败或被跳过，就没有配对离场动作；`exitCommands` 不是独立的离开监听器。被压制的区域没有 token；玩家掉线或插件停服默认不执行离场命令。
+- 命令与声音引用分别触发。两个区域使用同一 Sound Event 时，声音可能只播放一次，但两个入选区域各自的命令仍会执行。
+- `music.json` 可以为空；这种 command-only 区域可执行入场与配对离场命令，不要求配置声音。
+- 一直停留在区域内不会重复执行。曲目循环或续播、重载后仍命中同 UUID 区域、CraftEngine 资源包就绪后的声音补播均不会再次执行入场命令。若 `/am reload` 删除区域或改变形状使玩家不再命中，插件把它视为逻辑离开并执行已登记 token 的冻结离场动作；离开后重新进入才会建立新 token。
+
+### 执行格式
+
+命令以服务端控制台身份，在 Bukkit 主线程按数组顺序执行。一个字符串严格对应一次命令派发：RookieAreaMusic 不会按分号、`&&`、管道或引号再次拆分，也不会调用操作系统 Shell。推荐不写命令开头的 `/`；为了方便复制游戏内命令，允许至多一个前导 `/`，执行前会自动移除。
+
+每条命令独立执行。某条命令抛出异常、返回失败或占位符无法解析时，插件记录原因、跳过或结束该条，然后继续执行后面的命令。失败命令不会自动重试，因为目标插件可能已经执行了部分副作用。只有至少一次 Bukkit 命令派发返回成功，才登记本次入场的 activation token；离场尝试会先消费 token，即使离场命令失败也不会反复重试。
+
+### 内置占位符
+
+内置占位符不依赖 PlaceholderAPI。花括号与百分号两种写法等价：
+
+| 含义 | 花括号 | 百分号 |
+|---|---|---|
+| 玩家名 | `{player}`、`{player_name}` | `%player%`、`%player_name%` |
+| 玩家 UUID | `{player_uuid}` | `%player_uuid%` |
+| 当前世界 | `{world}` | `%world%` |
+| 区域所属世界 | `{area_world}` | `%area_world%` |
+| 区域 ID | `{area}`、`{area_id}` | `%area%`、`%area_id%` |
+| 区域内部 UUID | `{area_uuid}` | `%area_uuid%` |
+| 玩家精确坐标 | `{x}`、`{y}`、`{z}` | `%x%`、`%y%`、`%z%` |
+| 玩家方块坐标 | `{block_x}`、`{block_y}`、`{block_z}` | `%block_x%`、`%block_y%`、`%block_z%` |
+
+位置类占位符取该组命令在 Bukkit 主线程开始派发时的玩家当前位置。通常，入场动作得到区域内位置，离场动作得到走出或传送后的新位置；若玩家在异步判定与主线程派发之间又快速移动或连续传送，则以实际开始派发时的位置为准，并不保证是第一次越界的落点。`{area_world}` / `%area_world%` 和其他区域类占位符仍取 activation token 对应的区域信息。
+
+安装 PlaceholderAPI 后，RookieAreaMusic 还会展开其他扩展提供的 `%...%`，例如 `%luckperms_primary_group%`。PlaceholderAPI 是可选依赖；未安装时所有内置占位符仍然工作。非内置占位符没有对应扩展、扩展报错或展开后仍保留 `%...%` 时，该条命令会被跳过，而不是把未解析文本发送给目标插件。
+
+### 限制与安全边界
+
+- `enterCommands` 与 `exitCommands` 分别最多配置 16 条命令；每条模板最多 1024 个字符，每个数组的全部模板各自合计最多 8192 个字符；占位符展开后的单条命令最多 4096 个字符。
+- 命令在读取配置及占位符展开后都会检查长度与控制字符；空命令、NUL、CR/LF、两个前导 `/` 或超限内容会被拒绝或跳过。
+- `area.json` 等配置文件等同于受信任的服主管理输入，因为命令拥有控制台权限。不要把写入这些文件或修改 `enterCommands`、`exitCommands` 的能力交给普通玩家。
+- PlaceholderAPI 扩展可能返回玩家可控文本。Bukkit 命令之间没有通用参数转义规则，因此应优先把 `{player_uuid}` 或 `{player}` 放在目标命令明确要求玩家标识的位置，避免把自由文本占位符放到权限、命令名或其他敏感参数中。
+- RookieAreaMusic 只保证“一条配置字符串只派发一次”并阻断换行等多命令载荷；目标插件如何解释空格、引号及参数，仍由该插件决定。
 
 ## 固定坐标音源
 
@@ -223,7 +292,7 @@ sounds:
 - 可直接复制 [CraftEngine 多声道声音模板](examples/craftengine/rookie_music/configuration/sounds.yml)。模板包含长 BGM、三层 Ambience、Stinger 和固定音源配置。
 - RookieAreaMusic 不强制查询 CraftEngine 内部声音表。这样既允许使用 CraftEngine 生成的事件，也允许使用原版或其他资源包提供的事件，并避免绑定 CraftEngine 的内部版本。
 
-`plugin.yml` 将 CraftEngine 声明为可选依赖。检测到 CraftEngine 时，玩家资源包报告 `SUCCESSFULLY_LOADED` 后，RookieAreaMusic 会等待 10 ticks 做防抖，再为该玩家串行执行“停止旧区域声音 → 重新判断区域 → 播放当前声音”。这也会重新触发当前区域的 `enter_once`，确保客户端在资源包尚未就绪时错过的入场音能够补播；固定坐标音源不强制重播，会在下一次正常周期播放。
+`plugin.yml` 将 CraftEngine 声明为可选依赖。检测到 CraftEngine 时，玩家资源包报告 `SUCCESSFULLY_LOADED` 后，RookieAreaMusic 会等待 10 ticks 做防抖，再为该玩家串行执行“停止旧区域声音 → 重新判断区域 → 播放当前声音”。当前区域的 `enter_once` 声音可以补播，确保客户端不会因资源包尚未就绪而错过入场音；该维护性补播不会再次执行 `enterCommands` 或 `exitCommands`。固定坐标音源不强制重播，会在下一次正常周期播放。
 
 推荐重载顺序：
 
@@ -243,13 +312,13 @@ sounds:
 
 缓存未命中时，单次区域查询约为 `O(K × (log S + V))`。覆盖超过 4096 个 Chunk 的超大区域作为世界级候选处理，避免展开出大量索引项。
 
-每 20 ticks（约 1 秒）扫描一次在线玩家，最多分成 4 个异步分片。主线程只抓取不可变的位置快照并调度固定音源；Chunk 查询、切片判断和区域播放决策在异步线程执行；最终 `playSound` / `stopSound` 回到 Bukkit 主线程按玩家 FIFO 顺序执行。登录和传送会立即提交一次判断，同一玩家的任务保持串行；尚未开始的旧 revision 会被丢弃，已经开始并推进逻辑会话的任务则完整提交声音增量，后续 revision 再按 FIFO 修正，保证逻辑状态与客户端状态不会分叉。
+每 20 ticks（约 1 秒）扫描一次在线玩家，最多分成 4 个异步分片。主线程只抓取不可变的位置快照并调度固定音源；Chunk 查询、切片判断和区域播放决策在异步线程执行；最终 `playSound`、`stopSound`、占位符展开与控制台命令派发回到 Bukkit 主线程按玩家 FIFO 顺序执行。登录和传送会立即提交一次判断，同一玩家的任务保持串行；尚未开始的旧 revision 会被丢弃，已经开始并推进逻辑会话的任务则完整提交输出增量，后续 revision 再按 FIFO 修正，保证逻辑状态与客户端状态不会分叉。
 
 运行时的曲目、频道、固定音源和空间索引通过一个原子快照发布，因此重载期间不会混用新旧配置。重载成功后会立即刷新固定音源并重新计算在线玩家，但仍处于同一区域的 `enter_once` 不会重复触发。
 
 ## 给 LLM 的最小编辑上下文
 
-- 修改区域范围或播放策略：只提供该区域的 `area.json`。
+- 修改区域范围、播放策略或入场/离场命令：只提供该区域的 `area.json`。
 - 新增、删除或修改音乐：只提供该区域的 `music.json`。
 - 新建区域：复制两个文件到 `worlds/<世界名>/regions/<新区域 ID>/`。
 - 新增或修改固定音源：只提供对应的 `worlds/<世界名>/sources/<音源 ID>.json`。

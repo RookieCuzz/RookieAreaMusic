@@ -73,6 +73,10 @@ plugins/CraftEngine/resources/rookie_music/
 engine:
   checkPeriod: 20
 
+actions:
+  commands:
+    enabled: true
+
 channels:
   bgm:
     mode: exclusive
@@ -88,7 +92,7 @@ channels:
     trigger: enter_once
 ```
 
-`checkPeriod` 固定为 20 ticks。频道名允许小写字母、数字、点、下划线和连字符。
+`checkPeriod` 固定为 20 ticks。`actions.commands.enabled` 是全部区域入场/离场命令的总开关；关闭期间不会执行或排队命令，之后重新开启也不会为仍在区域内的玩家补执行。频道名允许小写字母、数字、点、下划线和连字符。
 
 可新增频道，例如最多两层的地下环境音：
 
@@ -155,11 +159,42 @@ Stinger 只在玩家由区域外进入区域内时触发：
   "overwrite": false,
   "volume": 1.0,
   "pitch": 1.0,
+  "enterCommands": [
+    "title {player} title {\"text\":\"Boss 即将出现\",\"color\":\"dark_red\"}",
+    "tag {player} add discovered_boss_gate"
+  ],
+  "exitCommands": [
+    "tag {player} remove discovered_boss_gate",
+    "effect clear {player} minecraft:glowing"
+  ],
   "shape": { "type": "sliced_polygon", "slices": [] }
 }
 ```
 
-实际使用时 `slices` 必须包含有效 Polygon，可复制 [boss_gate](examples/worlds/world/regions/boss_gate/) 示例。玩家一直留在区域中不会重复触发；离开后再次进入才会重播。
+实际使用时 `slices` 必须包含有效 Polygon，可复制 [boss_gate](examples/worlds/world/regions/boss_gate/) 示例。玩家一直留在区域中不会重复触发；至少一条入场命令成功派发后，走出、传送离开、切换世界或重载后区域不再命中会执行一次配对 `exitCommands`，离开后再次进入才会重播声音并重新执行入场命令。玩家掉线或插件停服默认不执行离场命令。
+
+`enterCommands`、`exitCommands` 只能用于 `trigger: enter_once` 的频道。命令以服务端控制台身份在主线程按数组顺序执行，每个字符串只对应一条命令；不会把分号、`&&` 或管道拆成多条命令。推荐省略开头的 `/`，也允许至多写一个前导 `/`。
+
+默认 `stinger.maxLayers: 2` 时，重叠区域中只有实际入选的前两层会执行命令。某次物理进入真正入选后，只有至少一条 `enterCommands` 获得 Bukkit 的成功派发结果，插件才登记 activation token；随后离开时消费同一 token，执行进入时冻结的 `exitCommands`。如果所有入场命令都失败或被跳过，就没有配对离场动作；`exitCommands` 不是独立的离开监听器。被层数限制压制的区域既没有入场命令，也没有离场命令，并且不会在空位出现时延迟触发，必须先离开再进入。命令不依赖声音：把 `music.json` 留空即可创建 command-only 区域。声音循环、重载后仍命中同 UUID 区域、CraftEngine 资源包就绪后的声音补播，都不会重复执行入场命令；某条命令失败时不会重试，并会继续处理后续命令。
+
+离场命令复用全部占位符。位置类占位符（`{world}`、`{x}`、`{block_x}` 等）取该组命令在主线程开始派发时的玩家当前位置；通常是走出或传送后的新位置，但快速连续移动时不保证是第一次越界的落点。`{area_world}` / `%area_world%` 始终表示触发区域所属世界。若 `/am reload` 删除区域或改动形状使玩家不再命中，插件把它视为逻辑离开，并使用入场时冻结的 `exitCommands` 做清理；同 UUID 区域在重载后仍命中则不会离场或重复入场。
+
+无需安装其他插件即可使用内置占位符，例如：
+
+```text
+effect give {player} minecraft:glowing 5 0 true
+tag {player} add visited_{area_id}
+```
+
+内置占位符提供 `{player}`、`{player_name}`、`{player_uuid}`、`{world}`、`{area_world}`、`{area}`、`{area_id}`、`{area_uuid}`、`{x}`、`{y}`、`{z}`、`{block_x}`、`{block_y}`、`{block_z}`，也支持相应的 `%player%`、`%player_name%`、`%player_uuid%`、`%world%`、`%area_world%`、`%area%`、`%area_id%`、`%area_uuid%`、`%x%`、`%y%`、`%z%`、`%block_x%`、`%block_y%`、`%block_z%` 写法。
+
+安装 PlaceholderAPI 和所需扩展后，还可使用其他插件提供的占位符，例如：
+
+```text
+broadcast %player_name% 已以 %luckperms_primary_group% 身份进入 Boss 区域
+```
+
+没有安装 PlaceholderAPI 时，内置占位符仍然有效。其他 `%...%` 占位符若没有对应扩展、展开失败或仍未解析，该条命令会被跳过，不会把占位符原样发送给目标插件。
 
 ## 7. 配置固定坐标音源
 
@@ -193,7 +228,8 @@ plugins/RookieAreaMusic/worlds/<世界>/sources/<音源ID>.json
 2. 修改 RookieAreaMusic JSON 或频道：`/am reload`。
 3. 进入区域，分别验证 BGM、三层 Ambience、Stinger 和固定音源。
 4. 离开区域确认区域声音停止，再次进入确认 Stinger 重触发。
-5. 移动到固定音源四周，确认距离衰减和左右/前后方向。
+5. 检查 Stinger 的入场命令只执行一次；走出后检查配对离场命令只执行一次。在区域内执行 `/am reload` 或触发资源包声音补播时不应重复执行。
+6. 移动到固定音源四周，确认距离衰减和左右/前后方向。
 
 重载失败时查看控制台中的具体文件路径。插件只有在全部新配置验证成功后才替换运行时快照，失败不会把半套配置投入运行。
 
@@ -217,3 +253,12 @@ plugins/RookieAreaMusic/worlds/<世界>/sources/<音源ID>.json
 ### 三层 Ambience 只听到一层
 
 确认三个区域都使用 `channel: ambience`、几何实际重叠、曲目事件键不同，并检查 `channels.ambience.maxLayers` 至少为 3。
+
+### 进入或离开区域后命令没有执行
+
+- 区域频道必须使用 `trigger: enter_once`。
+- 区域可能被 `maxLayers` 限制压制，并未真正入选层位。
+- 只有已经入选、且至少一条入场命令成功派发并登记 activation token 的那次进入，才会在随后离开时执行 `exitCommands`；掉线和停服默认不会执行。
+- 命令含有未安装扩展提供的 PlaceholderAPI 占位符，因此被安全跳过。
+- `enterCommands` 与 `exitCommands` 分别最多 16 条命令；每条最多 1024 个字符，每个数组合计最多 8192 个字符，且不能包含换行或 NUL 控制字符。
+- 控制台会记录命令索引和失败原因。失败命令不会自动重试，以免其他插件已经执行了部分效果。
