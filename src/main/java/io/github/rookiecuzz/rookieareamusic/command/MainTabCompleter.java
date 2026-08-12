@@ -39,7 +39,7 @@ public class MainTabCompleter implements TabCompleter {
             }
             if("area".equals(args[0])){
                 return filterMatching(
-                        Arrays.asList("create", "edit", "editor", "del", "list"),
+                        Arrays.asList("create", "edit", "show", "editor", "del", "list"),
                         args[1]
                 );
             }
@@ -74,7 +74,9 @@ public class MainTabCompleter implements TabCompleter {
                     || "list".equals(args[1]);
         }
         return "area".equals(args[0])
-                && ("edit".equals(args[1]) || "del".equals(args[1]));
+                && ("edit".equals(args[1])
+                || "show".equals(args[1])
+                || "del".equals(args[1]));
     }
 
     private List<String> filterMatching(Collection<String> candidates, String prefix){

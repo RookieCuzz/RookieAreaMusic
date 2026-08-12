@@ -19,6 +19,14 @@ public final class RegionEditSession {
         EDIT
     }
 
+    public enum AddPointResult {
+        POINT_ADDED,
+        HEIGHT_LOCKED_AND_POINT_ADDED,
+        HEIGHT_LOCKED_AND_EXISTING_POLYGON_REPLACED,
+        HEIGHT_LOCKED_FOR_COPIED_POLYGON,
+        HEIGHT_LOCKED_FOR_EXISTING_POLYGON
+    }
+
     private final Mode mode;
     private final String worldName;
     private final String areaId;
@@ -26,7 +34,10 @@ public final class RegionEditSession {
     private final int maxY;
     private final NavigableMap<Integer, List<RegionShapeConfig.Point>> slices =
             new TreeMap<>();
-    private int currentY;
+    private Integer currentY;
+    private Integer pendingAfterY;
+    private boolean pendingBlank;
+    private boolean heightLockOnly;
     private List<RegionShapeConfig.Point> draft;
     private long cancelConfirmationDeadline;
     private long draftRevision;
@@ -38,7 +49,7 @@ public final class RegionEditSession {
                              String areaId,
                              int minY,
                              int maxY,
-                             int currentY,
+                             Integer selectionY,
                              RegionShapeConfig initialShape) {
         if(mode == null){
             throw new IllegalArgumentException("编辑模式不能为空");
@@ -46,8 +57,11 @@ public final class RegionEditSession {
         if(isBlank(worldName) || isBlank(areaId)){
             throw new IllegalArgumentException("世界和区域 ID 不能为空");
         }
-        if(minY > maxY || currentY < minY || currentY > maxY){
-            throw new IllegalArgumentException("当前切片高度超出世界范围");
+        if(minY > maxY){
+            throw new IllegalArgumentException("世界高度范围无效");
+        }
+        if(selectionY != null && (selectionY < minY || selectionY > maxY)){
+            throw new IllegalArgumentException("切片选择高度超出世界范围");
         }
         this.mode = mode;
         this.worldName = worldName;
@@ -57,18 +71,43 @@ public final class RegionEditSession {
 
         loadInitialShape(initialShape);
         if(!slices.isEmpty()){
-            Integer selected = slices.floorKey(currentY);
+            Integer selected = selectionY == null ? null : slices.floorKey(selectionY);
             this.currentY = selected == null ? slices.firstKey() : selected;
             this.draft = copyPoints(slices.get(this.currentY));
         } else {
-            this.currentY = currentY;
+            this.currentY = null;
+            this.pendingBlank = true;
             this.draft = new ArrayList<>();
         }
     }
 
-    public void addPoint(double x, double z){
+    public AddPointResult addPoint(int blockY, double x, double z){
         if(!isFinite(x) || !isFinite(z)){
             throw new IllegalArgumentException("顶点坐标必须是有限数字");
+        }
+        boolean heightLocked = false;
+        boolean replacingExisting = false;
+        AddPointResult lockedResult = null;
+        if(currentY == null){
+            boolean blank = pendingBlank;
+            List<RegionShapeConfig.Point> existing = slices.get(blockY);
+            lockPendingHeight(blockY);
+            heightLocked = true;
+            if(blank){
+                draft = new ArrayList<>();
+                replacingExisting = existing != null;
+            } else if(existing != null){
+                draft = copyPoints(existing);
+                lockedResult = AddPointResult.HEIGHT_LOCKED_FOR_EXISTING_POLYGON;
+            } else if(!draft.isEmpty()){
+                lockedResult = AddPointResult.HEIGHT_LOCKED_FOR_COPIED_POLYGON;
+            }
+        }
+        if(lockedResult != null){
+            heightLockOnly = true;
+            invalidateDraftValidation();
+            cancelConfirmationDeadline = 0L;
+            return lockedResult;
         }
         if(draft.size() >= SlicedPolygonVolume.MAX_VERTICES_PER_SLICE){
             throw new IllegalStateException(
@@ -77,74 +116,121 @@ public final class RegionEditSession {
             );
         }
         draft.add(RegionShapeConfig.Point.builder().x(x).z(z).build());
+        heightLockOnly = false;
         invalidateDraftValidation();
         cancelConfirmationDeadline = 0L;
+        return heightLocked
+                ? (replacingExisting
+                        ? AddPointResult.HEIGHT_LOCKED_AND_EXISTING_POLYGON_REPLACED
+                        : AddPointResult.HEIGHT_LOCKED_AND_POINT_ADDED)
+                : AddPointResult.POINT_ADDED;
     }
 
     public boolean undoLastPoint(){
+        if(heightLockOnly && currentY != null){
+            currentY = null;
+            restorePendingDraft();
+            heightLockOnly = false;
+            invalidateDraftValidation();
+            cancelConfirmationDeadline = 0L;
+            return true;
+        }
+        if(currentY == null){
+            return false;
+        }
         if(draft.isEmpty()){
             return false;
         }
         draft.remove(draft.size() - 1);
+        unlockUnsavedHeightWhenEmpty();
         invalidateDraftValidation();
         cancelConfirmationDeadline = 0L;
         return true;
     }
 
     public void clearCurrentSlice(){
+        boolean unlockAsBlank = currentY == null
+                || (currentY != null && !slices.containsKey(currentY))
+                || pendingBlank;
         draft.clear();
+        heightLockOnly = false;
+        if(unlockAsBlank){
+            pendingBlank = true;
+        }
+        unlockUnsavedHeightWhenEmpty();
         invalidateDraftValidation();
         cancelConfirmationDeadline = 0L;
     }
 
     public void saveCurrentSlice(){
+        if(currentY == null){
+            throw new IllegalStateException("请先右键一个方块确定当前切片 Y");
+        }
         String error = currentValidationError();
         if(error != null){
             throw new IllegalStateException(error);
         }
         validateSaveCapacity();
         slices.put(currentY, copyPoints(draft));
+        pendingAfterY = null;
+        pendingBlank = false;
+        heightLockOnly = false;
         cancelConfirmationDeadline = 0L;
     }
 
-    public void saveAndNext(int playerY, boolean blank){
+    public void saveAndNext(boolean blank){
+        if(currentY == null){
+            throw new IllegalStateException("请先右键一个方块确定当前切片 Y");
+        }
+        if(currentY >= maxY){
+            throw new IllegalStateException("已经到达世界最高可用切片");
+        }
         saveCurrentSlice();
-        int targetY = playerY > currentY ? playerY : currentY + 1;
-        if(targetY < minY || targetY > maxY){
-            throw new IllegalStateException("下一切片高度超出世界范围");
-        }
-        if(!slices.containsKey(targetY)
-                && slices.size() >= SlicedPolygonVolume.MAX_SLICE_COUNT){
-            throw new IllegalStateException(
-                    "切片数量不能超过 " + SlicedPolygonVolume.MAX_SLICE_COUNT
-            );
-        }
-
-        List<RegionShapeConfig.Point> existing = slices.get(targetY);
-        List<RegionShapeConfig.Point> previous = slices.get(currentY);
-        currentY = targetY;
-        if(blank){
-            draft = new ArrayList<>();
-        } else if(existing != null){
-            draft = copyPoints(existing);
-        } else {
-            draft = copyPoints(previous);
-        }
+        Integer savedY = currentY;
+        pendingAfterY = savedY;
+        pendingBlank = blank;
+        currentY = null;
+        draft = blank
+                ? new ArrayList<>()
+                : copyPoints(slices.get(savedY));
+        heightLockOnly = false;
         invalidateDraftValidation();
     }
 
     public void saveAndPrevious(){
-        saveCurrentSlice();
+        if(currentY == null){
+            if(pendingAfterY == null){
+                throw new IllegalStateException("已经是第一张切片");
+            }
+            currentY = pendingAfterY;
+            pendingAfterY = null;
+            pendingBlank = false;
+            draft = copyPoints(slices.get(currentY));
+            heightLockOnly = false;
+            invalidateDraftValidation();
+            cancelConfirmationDeadline = 0L;
+            return;
+        }
         Integer previousY = slices.lowerKey(currentY);
         if(previousY == null){
             throw new IllegalStateException("已经是第一张切片");
         }
+        saveCurrentSlice();
         currentY = previousY;
+        pendingBlank = false;
         draft = copyPoints(slices.get(previousY));
+        heightLockOnly = false;
         invalidateDraftValidation();
     }
 
     public RegionShapeConfig finish(){
+        if(currentY == null){
+            throw new IllegalStateException(
+                    slices.isEmpty()
+                            ? "请先右键一个方块确定首张切片 Y"
+                            : "下一切片尚未选择 Y，请先点击方块或返回上一层"
+            );
+        }
         saveCurrentSlice();
         List<RegionShapeConfig.Slice> result = new ArrayList<>();
         for(Map.Entry<Integer, List<RegionShapeConfig.Point>> entry : slices.entrySet()){
@@ -171,6 +257,11 @@ public final class RegionEditSession {
     }
 
     private String validateCurrentDraft(){
+        if(currentY == null){
+            return slices.isEmpty()
+                    ? "请右键第一个方块确定首张切片 Y"
+                    : "请右键一个方块确定下一切片 Y";
+        }
         if(draft.size() < 3){
             return "当前切片至少需要 3 个顶点";
         }
@@ -215,8 +306,12 @@ public final class RegionEditSession {
         return areaId;
     }
 
-    public int getCurrentY(){
+    public Integer getCurrentY(){
         return currentY;
+    }
+
+    public boolean isAwaitingHeight(){
+        return currentY == null;
     }
 
     public List<RegionShapeConfig.Point> getDraft(){
@@ -257,6 +352,9 @@ public final class RegionEditSession {
     }
 
     private void validateSaveCapacity(){
+        if(currentY == null){
+            throw new IllegalStateException("请先右键一个方块确定当前切片 Y");
+        }
         boolean newSlice = !slices.containsKey(currentY);
         if(newSlice && slices.size() >= SlicedPolygonVolume.MAX_SLICE_COUNT){
             throw new IllegalStateException(
@@ -266,7 +364,7 @@ public final class RegionEditSession {
 
         long totalVertices = draft.size();
         for(Map.Entry<Integer, List<RegionShapeConfig.Point>> entry : slices.entrySet()){
-            if(entry.getKey() != currentY){
+            if(!entry.getKey().equals(currentY)){
                 totalVertices += entry.getValue().size();
             }
         }
@@ -276,6 +374,40 @@ public final class RegionEditSession {
                             + SlicedPolygonVolume.MAX_TOTAL_VERTICES
             );
         }
+    }
+
+    private void lockPendingHeight(int blockY){
+        if(blockY < minY || blockY > maxY){
+            throw new IllegalArgumentException("点击方块的 Y 超出世界可用范围: " + blockY);
+        }
+        if(pendingAfterY != null && blockY <= pendingAfterY){
+            throw new IllegalArgumentException(
+                    "下一切片 Y 必须高于上一切片 " + pendingAfterY
+            );
+        }
+        boolean existingSlice = slices.containsKey(blockY);
+        if(!existingSlice && slices.size() >= SlicedPolygonVolume.MAX_SLICE_COUNT){
+            throw new IllegalStateException(
+                    "切片数量不能超过 " + SlicedPolygonVolume.MAX_SLICE_COUNT
+            );
+        }
+        currentY = blockY;
+    }
+
+    private void unlockUnsavedHeightWhenEmpty(){
+        if(draft.isEmpty()
+                && currentY != null
+                && (!slices.containsKey(currentY) || pendingBlank)){
+            currentY = null;
+        }
+    }
+
+    private void restorePendingDraft(){
+        if(pendingBlank || pendingAfterY == null){
+            draft = new ArrayList<>();
+            return;
+        }
+        draft = copyPoints(slices.get(pendingAfterY));
     }
 
     private void invalidateDraftValidation(){

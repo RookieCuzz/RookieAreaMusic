@@ -5,6 +5,7 @@ import io.github.rookiecuzz.rookieareamusic.config.AreaDto;
 import io.github.rookiecuzz.rookieareamusic.config.ConfigManager;
 import io.github.rookiecuzz.rookieareamusic.config.Priority;
 import io.github.rookiecuzz.rookieareamusic.config.RegionShapeConfig;
+import io.github.rookiecuzz.rookieareamusic.geometry.RegionPreviewWireframe;
 import io.github.rookiecuzz.rookieareamusic.geometry.SlicedPolygonVolume;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
@@ -37,10 +38,22 @@ import java.util.logging.Level;
 public final class RegionEditorService {
     private static final int TOOL_COUNT = 5;
     private static final int PARTICLE_BUDGET = 512;
+    private static final Particle.DustOptions PREVIEW_BASE_DUST =
+            new Particle.DustOptions(Color.LIME, 0.85f);
+    private static final Particle.DustOptions PREVIEW_TRANSITION_DUST =
+            new Particle.DustOptions(Color.fromRGB(255, 165, 0), 0.85f);
+    private static final Particle.DustOptions PREVIEW_VERTICAL_DUST =
+            new Particle.DustOptions(Color.AQUA, 0.75f);
+    private static final Particle.DustOptions PREVIEW_FINAL_TOP_DUST =
+            new Particle.DustOptions(Color.RED, 0.95f);
+    private static final Particle.DustOptions PREVIEW_FALLBACK_DUST =
+            new Particle.DustOptions(Color.WHITE, 0.8f);
 
     private final RookieAreaMusic plugin;
     private final RegionEditorManager manager = new RegionEditorManager();
+    private final RegionPreviewManager previewManager = new RegionPreviewManager();
     private final Map<UUID, AreaDto> originalAreas = new HashMap<>();
+    private final Map<UUID, PreviewRenderState> previewRenderStates = new HashMap<>();
     private final NamespacedKey toolKey;
     private BukkitTask visualizationTask;
 
@@ -50,9 +63,12 @@ public final class RegionEditorService {
     }
 
     public void start(){
+        if(visualizationTask != null){
+            return;
+        }
         visualizationTask = Bukkit.getScheduler().runTaskTimer(
                 plugin,
-                this::renderSessions,
+                this::renderVisualizations,
                 10L,
                 10L
         );
@@ -71,6 +87,8 @@ public final class RegionEditorService {
         }
         originalAreas.clear();
         manager.clear();
+        previewRenderStates.clear();
+        previewManager.clear();
     }
 
     public boolean beginCreate(Player player, String areaId){
@@ -94,7 +112,7 @@ public final class RegionEditorService {
                         areaId,
                         player.getWorld().getMinHeight(),
                         player.getWorld().getMaxHeight() - 1,
-                        player.getLocation().getBlockY(),
+                        null,
                         null
                 ),
                 null
@@ -126,7 +144,7 @@ public final class RegionEditorService {
                     areaId,
                     world.getMinHeight(),
                     world.getMaxHeight() - 1,
-                    player.getLocation().getBlockY(),
+                    null,
                     area.getShape().getConfig()
             );
             return begin(player, session, copyArea(area));
@@ -142,6 +160,84 @@ public final class RegionEditorService {
 
     public boolean isRegionLocked(String worldName, String areaId){
         return manager.isLocked(worldName, areaId);
+    }
+
+    /**
+     * Toggles a saved region's complete wireframe for one player. The preview
+     * deliberately does not acquire the editor lock because it never mutates
+     * the published region.
+     */
+    public boolean toggleAreaPreview(Player player,
+                                     String worldName,
+                                     String areaId){
+        if(player == null){
+            return false;
+        }
+
+        UUID playerUuid = player.getUniqueId();
+        RegionPreviewManager.Target current = previewManager.get(playerUuid);
+        if(current != null
+                && current.getWorldName().equals(worldName)
+                && current.getAreaId().equals(areaId)){
+            clearAreaPreview(playerUuid);
+            player.sendMessage("§e[RookieAreaMusic] 已关闭区域轮廓预览: "
+                    + current.getWorldName() + "/" + current.getAreaId());
+            return true;
+        }
+        if(isBlank(worldName) || isBlank(areaId)){
+            player.sendMessage("§c[RookieAreaMusic] 世界和区域 ID 不能为空");
+            return false;
+        }
+        if(manager.get(playerUuid) != null){
+            player.sendMessage("§c[RookieAreaMusic] 请先完成或取消当前区域编辑，再开启已保存区域预览");
+            return false;
+        }
+
+        World world = Bukkit.getWorld(worldName);
+        if(world == null){
+            player.sendMessage("§c[RookieAreaMusic] 世界未加载: " + worldName);
+            return false;
+        }
+        if(!player.getWorld().equals(world)){
+            player.sendMessage("§c[RookieAreaMusic] 请先进入世界 " + worldName + " 再查看该区域");
+            return false;
+        }
+
+        AreaDto area = plugin.getConfigManager().findArea(worldName, areaId);
+        if(area == null || area.getShape() == null){
+            player.sendMessage("§c[RookieAreaMusic] 未找到有效区域 " + worldName + "/" + areaId);
+            return false;
+        }
+
+        try {
+            RegionPreviewWireframe wireframe = RegionPreviewWireframe.from(
+                    area.getShape().getConfig()
+            );
+            previewManager.toggle(playerUuid, worldName, areaId);
+            previewRenderStates.put(
+                    playerUuid,
+                    new PreviewRenderState(area, area.getShape(), wireframe)
+            );
+            player.sendMessage("§a[RookieAreaMusic] 已开启区域轮廓预览: "
+                    + worldName + "/" + areaId + "（仅你可见，再次执行同一命令关闭）");
+            player.sendMessage("§7有效 Y: §f[" + formatCoordinate(wireframe.getMinY())
+                    + ", " + formatCoordinate(wireframe.getMaxExclusiveY()) + ")"
+                    + " §7| §a绿=切片底面 §6橙=层间顶界"
+                    + " §b蓝=垂直范围 §c红=最终排除顶界");
+            player.sendMessage("§7请靠近区域观察；玩家位置判定使用脚部坐标。");
+            return true;
+        } catch (IllegalArgumentException e){
+            player.sendMessage("§c[RookieAreaMusic] 无法显示区域轮廓: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean clearAreaPreview(UUID playerUuid){
+        if(playerUuid == null){
+            return false;
+        }
+        previewRenderStates.remove(playerUuid);
+        return previewManager.remove(playerUuid);
     }
 
     public RegionEditorTool identifyTool(ItemStack item){
@@ -189,8 +285,42 @@ public final class RegionEditorService {
             return;
         }
         try {
-            session.addPoint(blockLocation.getBlockX() + 0.5, blockLocation.getBlockZ() + 0.5);
-            player.sendMessage("§a[RookieAreaMusic] 已添加顶点 #" + session.getDraft().size());
+            int clickedY = blockLocation.getBlockY();
+            Integer lockedBefore = session.getCurrentY();
+            RegionEditSession.AddPointResult result = session.addPoint(
+                    clickedY,
+                    blockLocation.getBlockX() + 0.5,
+                    blockLocation.getBlockZ() + 0.5
+            );
+            switch (result){
+                case HEIGHT_LOCKED_AND_POINT_ADDED:
+                    player.sendMessage("§a[RookieAreaMusic] 首个方块已将当前切片锁定为 Y="
+                            + session.getCurrentY() + "，并添加顶点 #1");
+                    break;
+                case HEIGHT_LOCKED_AND_EXISTING_POLYGON_REPLACED:
+                    player.sendMessage("§e[RookieAreaMusic] 已选择已有切片 Y="
+                            + session.getCurrentY()
+                            + " 并从空白轮廓重画；保存后将替换该层，当前已添加顶点 #1");
+                    break;
+                case HEIGHT_LOCKED_FOR_COPIED_POLYGON:
+                    player.sendMessage("§a[RookieAreaMusic] 首个方块已将当前切片锁定为 Y="
+                            + session.getCurrentY() + "；轮廓来自上一层，本次未追加顶点");
+                    break;
+                case HEIGHT_LOCKED_FOR_EXISTING_POLYGON:
+                    player.sendMessage("§a[RookieAreaMusic] 首个方块已选择已有切片 Y="
+                            + session.getCurrentY() + "；已载入原轮廓，本次未追加顶点");
+                    break;
+                case POINT_ADDED:
+                default:
+                    String message = "§a[RookieAreaMusic] 已添加顶点 #"
+                            + session.getDraft().size();
+                    if(lockedBefore != null && lockedBefore != clickedY){
+                        message += " §7（本层 Y=" + lockedBefore
+                                + " 已锁定，本次只读取 X/Z）";
+                    }
+                    player.sendMessage(message);
+                    break;
+            }
         } catch (IllegalStateException | IllegalArgumentException e){
             player.sendMessage("§c[RookieAreaMusic] 无法添加顶点: " + e.getMessage());
         }
@@ -201,9 +331,15 @@ public final class RegionEditorService {
         if(session == null){
             return;
         }
-        player.sendMessage(session.undoLastPoint()
-                ? "§e[RookieAreaMusic] 已撤销最后一个顶点"
-                : "§c[RookieAreaMusic] 当前切片没有可撤销的顶点");
+        boolean hadHeight = !session.isAwaitingHeight();
+        boolean undone = session.undoLastPoint();
+        if(undone && hadHeight && session.isAwaitingHeight()){
+            player.sendMessage("§e[RookieAreaMusic] 已撤销当前切片的 Y 选择，请重新右键方块");
+        } else {
+            player.sendMessage(undone
+                    ? "§e[RookieAreaMusic] 已撤销最后一个顶点"
+                    : "§c[RookieAreaMusic] 当前切片没有可撤销的顶点");
+        }
     }
 
     public void clearPoints(Player player){
@@ -212,7 +348,9 @@ public final class RegionEditorService {
             return;
         }
         session.clearCurrentSlice();
-        player.sendMessage("§e[RookieAreaMusic] 已清空当前切片");
+        player.sendMessage(session.isAwaitingHeight()
+                ? "§e[RookieAreaMusic] 已清空当前待编辑切片并解除 Y 锁定，请重新右键方块"
+                : "§e[RookieAreaMusic] 已清空当前切片（已有切片 Y 保持不变）");
     }
 
     public void nextSlice(Player player, boolean blank){
@@ -221,9 +359,10 @@ public final class RegionEditorService {
             return;
         }
         try {
-            session.saveAndNext(player.getLocation().getBlockY(), blank);
-            player.sendMessage("§a[RookieAreaMusic] 已进入 Y=" + session.getCurrentY()
-                    + (blank ? " 的空白切片" : "，已复制/载入轮廓"));
+            session.saveAndNext(blank);
+            player.sendMessage("§a[RookieAreaMusic] 已进入 Y 待选择的下一切片；"
+                    + "请用勾画笔右键第一个方块决定 blockY"
+                    + (blank ? "（空白轮廓）" : "（将复制上一层或载入已有轮廓）"));
         } catch (IllegalStateException e){
             player.sendMessage("§c[RookieAreaMusic] " + e.getMessage());
         }
@@ -312,14 +451,19 @@ public final class RegionEditorService {
             player.sendMessage("§c[RookieAreaMusic] " + e.getMessage());
             return false;
         }
+        clearAreaPreview(player.getUniqueId());
         if(originalArea != null){
             originalAreas.put(player.getUniqueId(), originalArea);
         }
         giveTools(player);
         player.sendMessage("§a[RookieAreaMusic] 已进入 CT ROI 编辑模式: "
                 + session.getWorldName() + "/" + session.getAreaId());
-        player.sendMessage("§7当前切片 Y=" + session.getCurrentY()
-                + "；使用勾画笔右键添加顶点，左键撤销");
+        if(session.isAwaitingHeight()){
+            player.sendMessage("§7首张切片 Y 尚未确定；勾画笔右键的第一个方块将锁定其 blockY");
+        } else {
+            player.sendMessage("§7已载入已有切片 Y=" + session.getCurrentY()
+                    + "；其 Y 保持不变，右键只修改轮廓 X/Z");
+        }
         return true;
     }
 
@@ -399,11 +543,22 @@ public final class RegionEditorService {
     private List<String> toolLore(RegionEditorTool tool){
         switch (tool){
             case POINT:
-                return Arrays.asList("§7右键方块：添加顶点", "§7左键：撤销", "§7潜行左键：清空");
+                return Arrays.asList(
+                        "§7新切片首次右键：用方块 blockY 锁定高度",
+                        "§7后续右键：添加 X/Z 顶点",
+                        "§7左键：撤销；潜行左键：清空"
+                );
             case NEXT:
-                return Arrays.asList("§7保存当前轮廓并进入更高切片", "§7潜行使用：下一层不复制轮廓");
+                return Arrays.asList(
+                        "§7保存并等待点击下一切片的 Y",
+                        "§7普通使用：复制上一层或载入已有轮廓",
+                        "§7潜行使用：从空白轮廓开始重画"
+                );
             case PREVIOUS:
-                return Collections.singletonList("§7保存当前轮廓并返回上一切片");
+                return Arrays.asList(
+                        "§7已有当前 Y：保存轮廓并返回上一切片",
+                        "§7Y 尚未选择：丢弃待选层并返回"
+                );
             case FINISH:
                 return Collections.singletonList("§7验证、保存全部切片并退出");
             case CANCEL:
@@ -503,6 +658,11 @@ public final class RegionEditorService {
                 .build();
     }
 
+    private void renderVisualizations(){
+        renderSessions();
+        renderPreviews();
+    }
+
     private void renderSessions(){
         for(Map.Entry<UUID, RegionEditSession> entry : manager.snapshot()){
             Player player = Bukkit.getPlayer(entry.getKey());
@@ -520,24 +680,126 @@ public final class RegionEditorService {
         }
     }
 
+    private void renderPreviews(){
+        for(Map.Entry<UUID, RegionPreviewManager.Target> entry
+                : previewManager.snapshot().entrySet()){
+            UUID playerUuid = entry.getKey();
+            RegionPreviewManager.Target target = entry.getValue();
+            Player player = Bukkit.getPlayer(playerUuid);
+            if(player == null || !player.isOnline()){
+                clearAreaPreview(playerUuid);
+                continue;
+            }
+            if(manager.get(playerUuid) != null
+                    || !player.getWorld().getName().equals(target.getWorldName())){
+                clearAreaPreview(playerUuid);
+                continue;
+            }
+
+            AreaDto area = plugin.getConfigManager().findArea(
+                    target.getWorldName(),
+                    target.getAreaId()
+            );
+            if(area == null || area.getShape() == null){
+                clearAreaPreview(playerUuid);
+                player.sendMessage("§e[RookieAreaMusic] 区域已不存在，轮廓预览已关闭: "
+                        + target.getWorldName() + "/" + target.getAreaId());
+                continue;
+            }
+
+            try {
+                PreviewRenderState state = previewRenderStates.get(playerUuid);
+                if(state == null
+                        || state.area != area
+                        || state.shape != area.getShape()){
+                    state = new PreviewRenderState(
+                            area,
+                            area.getShape(),
+                            RegionPreviewWireframe.from(area.getShape().getConfig())
+                    );
+                    previewRenderStates.put(playerUuid, state);
+                }
+                renderPreview(player, target, state);
+            } catch (RuntimeException e){
+                clearAreaPreview(playerUuid);
+                plugin.getLogger().log(
+                        Level.WARNING,
+                        "区域轮廓预览渲染失败: "
+                                + target.getWorldName() + "/" + target.getAreaId(),
+                        e
+                );
+                player.sendMessage("§c[RookieAreaMusic] 区域轮廓渲染失败，预览已关闭: "
+                        + deepestMessage(e));
+            }
+        }
+    }
+
+    private void renderPreview(Player player,
+                               RegionPreviewManager.Target target,
+                               PreviewRenderState state){
+        double phase = state.nextPhase();
+        for(RegionPreviewWireframe.Sample sample
+                : state.wireframe.sample(PARTICLE_BUDGET, phase)){
+            player.spawnParticle(
+                    Particle.DUST,
+                    new Location(
+                            player.getWorld(),
+                            sample.getX(),
+                            sample.getY(),
+                            sample.getZ()
+                    ),
+                    1,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    previewDust(sample.getStyle()),
+                    true
+            );
+        }
+
+        String status = "§dROI 轮廓 §f" + target.getWorldName() + "/" + target.getAreaId()
+                + " §7| §eY=[" + formatCoordinate(state.wireframe.getMinY())
+                + "," + formatCoordinate(state.wireframe.getMaxExclusiveY()) + ")"
+                + " §7| §b切片=" + state.wireframe.getSliceCount();
+        player.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(status));
+    }
+
+    private Particle.DustOptions previewDust(RegionPreviewWireframe.Style style){
+        switch (style){
+            case BASE:
+                return PREVIEW_BASE_DUST;
+            case TRANSITION_TOP:
+                return PREVIEW_TRANSITION_DUST;
+            case VERTICAL:
+                return PREVIEW_VERTICAL_DUST;
+            case FINAL_TOP:
+                return PREVIEW_FINAL_TOP_DUST;
+            default:
+                return PREVIEW_FALLBACK_DUST;
+        }
+    }
+
     private void renderSession(Player player, RegionEditSession session){
         ParticleBudget budget = new ParticleBudget(PARTICLE_BUDGET);
         String validation = session.currentValidationError();
         Color currentColor = validation == null
                 ? Color.LIME
                 : Color.RED;
-        drawPolygon(
-                player,
-                session.getDraft(),
-                session.getCurrentY(),
-                currentColor,
-                validation == null ? Color.WHITE : Color.RED,
-                true,
-                budget
-        );
+        if(!session.isAwaitingHeight()){
+            drawPolygon(
+                    player,
+                    session.getDraft(),
+                    session.getCurrentY(),
+                    currentColor,
+                    validation == null ? Color.WHITE : Color.RED,
+                    true,
+                    budget
+            );
+        }
         for(Map.Entry<Integer, List<RegionShapeConfig.Point>> entry
                 : session.getSavedSlices().entrySet()){
-            if(entry.getKey() == session.getCurrentY()){
+            if(entry.getKey().equals(session.getCurrentY())){
                 continue;
             }
             drawPolygon(
@@ -555,7 +817,9 @@ public final class RegionEditorService {
         }
 
         String status = "§aROI §f" + session.getWorldName() + "/" + session.getAreaId()
-                + " §7| §eY=" + session.getCurrentY()
+                + " §7| §eY=" + (session.isAwaitingHeight()
+                        ? "待首次点击 blockY"
+                        : session.getCurrentY())
                 + " §7| §b切片=" + session.getSavedSliceCount()
                 + " §7| §d顶点=" + session.getDraft().size();
         if(validation != null){
@@ -635,6 +899,18 @@ public final class RegionEditorService {
         return areaId != null && areaId.matches("[A-Za-z0-9._-]+");
     }
 
+    private boolean isBlank(String value){
+        return value == null || value.trim().isEmpty();
+    }
+
+    private String formatCoordinate(double value){
+        long integer = (long) value;
+        if(value == integer){
+            return Long.toString(integer);
+        }
+        return Double.toString(value);
+    }
+
     private String deepestMessage(Throwable throwable){
         Throwable current = throwable;
         String message = throwable.getClass().getSimpleName();
@@ -660,6 +936,29 @@ public final class RegionEditorService {
             }
             remaining--;
             return true;
+        }
+    }
+
+    private static final class PreviewRenderState {
+        private static final double PHASE_STEP = 0.3819660112501051;
+
+        private final AreaDto area;
+        private final SlicedPolygonVolume shape;
+        private final RegionPreviewWireframe wireframe;
+        private double phase;
+
+        private PreviewRenderState(AreaDto area,
+                                   SlicedPolygonVolume shape,
+                                   RegionPreviewWireframe wireframe) {
+            this.area = area;
+            this.shape = shape;
+            this.wireframe = wireframe;
+        }
+
+        private double nextPhase(){
+            double result = phase;
+            phase = (phase + PHASE_STEP) % 1.0;
+            return result;
         }
     }
 }

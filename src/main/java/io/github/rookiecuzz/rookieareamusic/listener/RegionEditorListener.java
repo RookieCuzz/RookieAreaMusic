@@ -1,5 +1,6 @@
 package io.github.rookiecuzz.rookieareamusic.listener;
 
+import io.github.rookiecuzz.rookieareamusic.editor.RegionEditSession;
 import io.github.rookiecuzz.rookieareamusic.editor.RegionEditorService;
 import io.github.rookiecuzz.rookieareamusic.editor.RegionEditorTool;
 import org.bukkit.block.Block;
@@ -61,7 +62,10 @@ public final class RegionEditorListener implements Listener {
                         editor.undoPoint(player);
                     }
                 } else {
-                    player.sendMessage("§e[RookieAreaMusic] 请右键方块添加顶点");
+                    RegionEditSession session = editor.getSession(player.getUniqueId());
+                    player.sendMessage(session != null && session.isAwaitingHeight()
+                            ? "§e[RookieAreaMusic] 请用勾画笔右键一个方块确定切片 Y"
+                            : "§e[RookieAreaMusic] 请右键方块添加顶点");
                 }
                 break;
             case NEXT:
@@ -172,18 +176,24 @@ public final class RegionEditorListener implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent event){
         editor.cancelImmediately(event.getPlayer(), false);
+        editor.clearAreaPreview(event.getPlayer().getUniqueId());
     }
 
     @EventHandler
     public void onWorldChanged(PlayerChangedWorldEvent event){
+        boolean previewClosed = editor.clearAreaPreview(event.getPlayer().getUniqueId());
         if(editor.getSession(event.getPlayer().getUniqueId()) != null){
             editor.cancelImmediately(event.getPlayer(), false);
             event.getPlayer().sendMessage("§e[RookieAreaMusic] 由于切换世界，区域编辑已取消");
+        }
+        if(previewClosed){
+            event.getPlayer().sendMessage("§e[RookieAreaMusic] 由于切换世界，区域轮廓预览已关闭");
         }
     }
 
     @EventHandler
     public void onDeath(PlayerDeathEvent event){
+        boolean previewClosed = editor.clearAreaPreview(event.getEntity().getUniqueId());
         boolean removed = false;
         java.util.ListIterator<ItemStack> iterator = event.getDrops().listIterator();
         while(iterator.hasNext()){
@@ -204,6 +214,9 @@ public final class RegionEditorListener implements Listener {
             event.getEntity().sendMessage("§e[RookieAreaMusic] 由于死亡，区域编辑已取消");
         } else if(removed){
             editor.removeTools(event.getEntity());
+        }
+        if(previewClosed){
+            event.getEntity().sendMessage("§e[RookieAreaMusic] 由于死亡，区域轮廓预览已关闭");
         }
     }
 }

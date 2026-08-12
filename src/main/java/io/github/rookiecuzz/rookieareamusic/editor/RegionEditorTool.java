@@ -4,8 +4,8 @@ import org.bukkit.Material;
 
 public enum RegionEditorTool {
     POINT("point", Material.BLAZE_ROD, "§aROI 勾画笔"),
-    NEXT("next", Material.LIME_DYE, "§e保存并进入下一层"),
-    PREVIOUS("previous", Material.CLOCK, "§b上一层"),
+    NEXT("next", Material.LIME_DYE, "§e保存并选择下一切片"),
+    PREVIOUS("previous", Material.CLOCK, "§b上一切片"),
     FINISH("finish", Material.EMERALD, "§a完成编辑"),
     CANCEL("cancel", Material.BARRIER, "§c取消编辑");
 

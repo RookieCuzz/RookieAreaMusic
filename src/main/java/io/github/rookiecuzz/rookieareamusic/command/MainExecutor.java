@@ -62,6 +62,8 @@ public class MainExecutor implements CommandExecutor {
                         return handleCreateArea(sender, Arrays.copyOfRange(args, 2, args.length));
                     case "edit":
                         return handleEditArea(sender, Arrays.copyOfRange(args, 2, args.length));
+                    case "show":
+                        return handleShowArea(sender, Arrays.copyOfRange(args, 2, args.length));
                     case "editor":
                         return handleAreaEditor(sender, Arrays.copyOfRange(args, 2, args.length));
                     case "del":
@@ -296,6 +298,23 @@ public class MainExecutor implements CommandExecutor {
         return true;
     }
 
+    private boolean handleShowArea(CommandSender sender, String[] args){
+        if(!(sender instanceof Player)){
+            sender.sendMessage("§c[RookieAreaMusic] 该命令只能由玩家执行");
+            return true;
+        }
+        if(args.length != 2){
+            sender.sendMessage("§c[RookieAreaMusic] 用法: /am area show <世界> <区域ID>");
+            return true;
+        }
+        plugin.getRegionEditorService().toggleAreaPreview(
+                (Player) sender,
+                args[0],
+                args[1]
+        );
+        return true;
+    }
+
     private boolean handleAreaEditor(CommandSender sender, String[] args){
         if(!(sender instanceof Player)){
             sender.sendMessage("§c[RookieAreaMusic] 该命令只能由玩家执行");
@@ -460,6 +479,7 @@ public class MainExecutor implements CommandExecutor {
         sender.sendMessage("§2[RookieAreaMusic] 管理命令");
         sender.sendMessage("§f/am area create <区域ID> §7- 新建 CT 切片区域");
         sender.sendMessage("§f/am area edit <世界> <区域ID> §7- 编辑区域形状");
+        sender.sendMessage("§f/am area show <世界> <区域ID> §7- 显示或关闭已保存区域的粒子轮廓");
         sender.sendMessage("§f/am area editor <finish|cancel> §7- 完成或取消编辑");
         sender.sendMessage("§f/am area list [页码] §7- 列出区域");
         sender.sendMessage("§f/am area del <世界> <区域ID> §7- 删除区域并保留回收备份");
