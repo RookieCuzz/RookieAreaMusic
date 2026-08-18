@@ -1,0 +1,5 @@
+name: RookieRegionsIntegrationExample
+version: 1.0.0
+main: example.RookieRegionsIntegrationExample
+api-version: '1.21.4'
+depend: [RookieRegions]

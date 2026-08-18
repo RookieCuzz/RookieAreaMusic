@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "quiet_grove",
+  "world": {
+    "uuid": "00000000-0000-0000-0000-000000000001",
+    "key": "minecraft:overworld"
+  },
+  "parent": "forest",
+  "priority": 0,
+  "shape": {
+    "type": "cuboid",
+    "min": {"x": 20.0, "y": -64.0, "z": 20.0},
+    "max": {"x": 40.0, "y": 320.0, "z": 40.0}
+  },
+  "owners": {"players": [], "groups": []},
+  "members": {"players": [], "groups": []},
+  "flags": {},
+  "modules": {
+    "music": {
+      "binding": null,
+      "channels": {
+        "ambience": {
+          "policy": "block",
+          "order": 100,
+          "random": false,
+          "loop": true,
+          "volume": 1.0,
+          "pitch": 1.0,
+          "overwrite": true,
+          "tracks": []
+        }
+      }
+    },
+    "commands": {"binding": null, "enter": [], "leave": []}
+  }
+}

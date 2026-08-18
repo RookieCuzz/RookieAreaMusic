@@ -1,9 +1,0 @@
-{
-  "music": [
-    {
-      "id": "spawn_day",
-      "sound": "rookie_music:bgm.overworld_day",
-      "duration": 180
-    }
-  ]
-}

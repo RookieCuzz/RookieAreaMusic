@@ -1,23 +1,23 @@
-# 区域判断循环固定每秒执行一次。
-engine:
-  # 单位：tick；20 ticks 约等于 1 秒。
-  checkPeriod: 20
+schemaVersion: 1
 
-actions:
-  commands:
-    # Stinger / enter_once 区域的 enterCommands / exitCommands 总开关。
-    enabled: true
+editor:
+  confirmationSeconds: 30
 
-channels:
-  bgm:
-    mode: exclusive
-    maxLayers: 1
-    trigger: continuous
-  ambience:
-    mode: additive
-    maxLayers: 3
-    trigger: continuous
-  stinger:
-    mode: additive
-    maxLayers: 2
-    trigger: enter_once
+playerCreation:
+  enabled: true
+
+protection:
+  notifyDeniedActions: true
+
+music:
+  scanPeriodTicks: 20
+  channels:
+    bgm:
+      mode: EXCLUSIVE
+      maxLayers: 1
+    ambience:
+      mode: LAYERED
+      maxLayers: 3
+    stinger:
+      mode: LAYERED
+      maxLayers: 2

@@ -1,18 +1,74 @@
-name: RookieAreaMusic
+name: RookieRegions
 version: @version@
-main: io.github.rookiecuzz.rookieareamusic.RookieAreaMusic
+main: io.github.rookiecuzz.rookieregions.RookieRegionsPlugin
 api-version: '1.21.4'
-prefix: RookieAreaMusic
-authors: [ RookieCuzz ]
-website: https://github.com/RookieCuzz/RookieAreaMusic
-description: "基于多边形切片区域的多频道音乐播放插件"
-softdepend: [ CraftEngine, PlaceholderAPI ]
+prefix: RookieRegions
+authors: [RookieCuzz]
+website: https://github.com/RookieCuzz/RookieRegions
+description: Typed hierarchical region protection with music and command modules
+softdepend: [WorldGuard, CraftEngine]
+
 commands:
-  am:
-    description: 管理区域音乐、CT 切片区域和播放配置
-    usage: /am <music|area|reload|help>
-    permission: rookieareamusic.admin
+  rr:
+    description: Manage RookieRegions regions, flags, protection, and modules
+    usage: /rr <region|music|module|reload|help>
+
 permissions:
-  rookieareamusic.admin:
-    description: Allows management of RookieAreaMusic
+  rookieregions.admin:
+    description: Grants every RookieRegions management and bypass permission
+    default: op
+    children:
+      rookieregions.region.create: true
+      rookieregions.region.edit.own: true
+      rookieregions.region.edit.any: true
+      rookieregions.region.delete: true
+      rookieregions.region.view: true
+      rookieregions.region.overlap: true
+      rookieregions.region.flag: true
+      rookieregions.module.music: true
+      rookieregions.module.commands: true
+      rookieregions.reload: true
+      rookieregions.bypass.build: true
+      rookieregions.bypass.block-break: true
+      rookieregions.bypass.block-place: true
+      rookieregions.bypass.use: true
+      rookieregions.bypass.container: true
+      rookieregions.bypass.pvp: true
+      rookieregions.bypass.entry: true
+      rookieregions.bypass.explosion: true
+  rookieregions.region.create:
+    default: false
+  rookieregions.region.edit.own:
+    default: false
+  rookieregions.region.edit.any:
+    default: op
+  rookieregions.region.delete:
+    default: op
+  rookieregions.region.view:
+    default: true
+  rookieregions.region.overlap:
+    default: op
+  rookieregions.region.flag:
+    default: op
+  rookieregions.module.music:
+    default: op
+  rookieregions.module.commands:
+    default: op
+  rookieregions.reload:
+    default: op
+  rookieregions.bypass.build:
+    default: op
+  rookieregions.bypass.block-break:
+    default: op
+  rookieregions.bypass.block-place:
+    default: op
+  rookieregions.bypass.use:
+    default: op
+  rookieregions.bypass.container:
+    default: op
+  rookieregions.bypass.pvp:
+    default: op
+  rookieregions.bypass.entry:
+    default: op
+  rookieregions.bypass.explosion:
     default: op

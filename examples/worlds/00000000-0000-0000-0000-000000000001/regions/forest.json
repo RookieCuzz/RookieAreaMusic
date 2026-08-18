@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "forest",
+  "world": {
+    "uuid": "00000000-0000-0000-0000-000000000001",
+    "key": "minecraft:overworld"
+  },
+  "parent": "__global__",
+  "priority": 0,
+  "shape": {
+    "type": "cuboid",
+    "min": {"x": 0.0, "y": -64.0, "z": 0.0},
+    "max": {"x": 100.0, "y": 320.0, "z": 100.0}
+  },
+  "owners": {"players": [], "groups": ["builders"]},
+  "members": {"players": [], "groups": []},
+  "flags": {
+    "core.allow-player-regions": "allow"
+  },
+  "modules": {
+    "music": {
+      "binding": null,
+      "channels": {
+        "ambience": {
+          "policy": "add",
+          "order": 10,
+          "random": true,
+          "loop": true,
+          "volume": 0.8,
+          "pitch": 1.0,
+          "overwrite": true,
+          "tracks": [
+            {
+              "id": "forest-birds",
+              "sound": "rookieregions:forest.birds",
+              "duration": 30
+            }
+          ]
+        }
+      }
+    },
+    "commands": {"binding": null, "enter": [], "leave": []}
+  }
+}

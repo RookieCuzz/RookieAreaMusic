@@ -5,13 +5,13 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.github.rookiecuzz</groupId>
-    <artifactId>RookieAreaMusic</artifactId>
-    <version>1.2.0</version>
+    <artifactId>RookieRegions</artifactId>
+    <version>2.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
-    <name>RookieAreaMusic</name>
-    <description>Multi-channel sliced-polygon area music for Paper/Spigot 1.21.4</description>
-    <url>https://github.com/RookieCuzz/RookieAreaMusic</url>
+    <name>RookieRegions</name>
+    <description>Typed, hierarchical region protection and modules for Paper 1.21.4+</description>
+    <url>https://github.com/RookieCuzz/RookieRegions</url>
 
     <licenses>
         <license>
@@ -32,15 +32,30 @@
     </developers>
 
     <scm>
-        <connection>scm:git:https://github.com/RookieCuzz/RookieAreaMusic.git</connection>
-        <developerConnection>scm:git:https://github.com/RookieCuzz/RookieAreaMusic.git</developerConnection>
-        <url>https://github.com/RookieCuzz/RookieAreaMusic</url>
+        <connection>scm:git:https://github.com/RookieCuzz/RookieRegions.git</connection>
+        <developerConnection>scm:git:https://github.com/RookieCuzz/RookieRegions.git</developerConnection>
+        <url>https://github.com/RookieCuzz/RookieRegions</url>
     </scm>
 
+    <!--
+      ~/.m2/settings.xml already supplies credentials for these server IDs.
+      Pass both URLs with -D when deploying; credentials never belong in Git.
+    -->
+    <distributionManagement>
+        <repository>
+            <id>nexus-releases</id>
+            <url>${rookieregions.nexus.releases}</url>
+        </repository>
+        <snapshotRepository>
+            <id>nexus-snapshots</id>
+            <url>${rookieregions.nexus.snapshots}</url>
+        </snapshotRepository>
+    </distributionManagement>
+
     <properties>
-        <java.version>1.8</java.version>
-        <lombok.version>1.18.46</lombok.version>
+        <java.version>21</java.version>
         <junit.version>5.10.2</junit.version>
+        <jts.version>1.20.0</jts.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
@@ -51,21 +66,13 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                            <version>${lombok.version}</version>
-                        </path>
-                    </annotationProcessorPaths>
+                    <release>${java.version}</release>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.2.4</version>
+                <version>3.6.2</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -74,6 +81,16 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <relocations>
+                                <relocation>
+                                    <pattern>org.locationtech.jts</pattern>
+                                    <shadedPattern>io.github.rookiecuzz.rookieregions.libs.jts</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>com.google.gson</pattern>
+                                    <shadedPattern>io.github.rookiecuzz.rookieregions.libs.gson</shadedPattern>
+                                </relocation>
+                            </relocations>
                         </configuration>
                     </execution>
                 </executions>
@@ -82,6 +99,68 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <executions>
+                    <execution>
+                        <id>rookieregions-api</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                        <configuration>
+                            <classifier>api</classifier>
+                            <includes>
+                                <include>META-INF/LICENSE</include>
+                                <include>io/github/rookiecuzz/rookieregions/api/Api*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/api/RookieRegionsApi*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/api/RookieRegionsBootstrap*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/api/Protection*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/api/ModuleBindingQuery*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/api/event/**</include>
+                                <include>io/github/rookiecuzz/rookieregions/bukkit/BukkitSubjects*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/bukkit/BukkitWorlds*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/core/**</include>
+                                <include>io/github/rookiecuzz/rookieregions/rule/**</include>
+                                <include>io/github/rookiecuzz/rookieregions/provider/RegionProvider*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/runtime/BoundModuleRegion*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/runtime/ModuleBindingIssue*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/runtime/ModuleBindingResolution*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/runtime/ModuleBindingValidator*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/runtime/ModuleKind*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/runtime/ModuleRegionBinding*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/runtime/ProviderRegionReference*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/runtime/RegionRecord*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/commands/RegionCommandProfile*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/ChannelPlaybackMode*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/MusicChannelDefinition*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/MusicPolicyMode*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/MusicResolution*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/MusicTrack*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/RegionMusicChannel*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/RegionMusicProfile*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/RegionMusicRecord*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/ResolvedMusicChannel*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/module/music/ResolvedMusicLayer*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/ConfirmationOption*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/PlacementOption*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/RegionDelete*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/RegionFingerprints*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/RegionMutationApi*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/RegionSave*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/SaveChoice*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/SaveMode*.class</include>
+                                <include>io/github/rookiecuzz/rookieregions/mutation/StaleReason*.class</include>
+                            </includes>
+                            <excludes>
+                                <exclude>io/github/rookiecuzz/rookieregions/core/RegionContainer*.class</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
         <resources>
@@ -102,39 +181,27 @@
 
     <repositories>
         <repository>
-            <id>spigotmc-repo</id>
-            <url>https://hub.spigotmc.org/nexus/content/repositories/snapshots/</url>
-        </repository>
-        <repository>
-            <id>sonatype</id>
-            <url>https://oss.sonatype.org/content/groups/public/</url>
+            <id>papermc</id>
+            <url>https://repo.papermc.io/repository/maven-public/</url>
         </repository>
     </repositories>
 
     <dependencies>
         <dependency>
-            <groupId>org.spigotmc</groupId>
-            <artifactId>spigot-api</artifactId>
+            <groupId>io.papermc.paper</groupId>
+            <artifactId>paper-api</artifactId>
             <version>1.21.4-R0.1-SNAPSHOT</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>${lombok.version}</version>
-            <scope>provided</scope>
+            <groupId>org.locationtech.jts</groupId>
+            <artifactId>jts-core</artifactId>
+            <version>${jts.version}</version>
         </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>2.11.0</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.md-5</groupId>
-            <artifactId>bungeecord-chat</artifactId>
-            <version>1.20-R0.2</version>
-            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

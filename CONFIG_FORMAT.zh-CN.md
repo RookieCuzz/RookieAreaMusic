@@ -1,346 +1,428 @@
-# RookieAreaMusic 分区配置指南
+# RookieRegions 2.0 配置格式
 
-如果要从 OGG 和 CraftEngine 开始搭建整套配置，请先看 [CONFIG_GUIDE.zh-CN.md](CONFIG_GUIDE.zh-CN.md)。本文作为字段、播放规则和运行模型的完整参考。
+本文是 `schemaVersion: 1` 的规范参考。实际部署步骤与 `/rr` 命令示例见
+[CONFIG_GUIDE.zh-CN.md](CONFIG_GUIDE.zh-CN.md)。2.0 不读取 RookieAreaMusic 1.x
+的 `area.json`、`music.json`、`sources/` 或 `/am` 命令。
 
-每个区域使用一对独立 JSON。修改单个区域时，只需把该目录交给 LLM，不必加载其他世界、区域或曲目。
+## 数据目录与身份
 
 ```text
-plugins/RookieAreaMusic/
+plugins/RookieRegions/
 ├─ config.yml
-└─ worlds/
-   └─ <世界名>/
-      ├─ regions/
-      │  └─ <区域 ID>/
-      │     ├─ area.json
-      │     └─ music.json
-      └─ sources/
-         └─ <音源 ID>.json
+├─ worlds/
+   └─ <world-uuid>/
+      └─ regions/
+         └─ <region-id>.json
+└─ .trash/
+   └─ <world-uuid>/
+      └─ <region-id>.<timestamp>.<uuid>.json
 ```
 
-世界名与区域 ID 来自目录名；内部 UUID 由插件稳定生成，不写进 JSON。
+- 世界目录名必须是 Bukkit 世界 UUID，例如
+  `00000000-0000-0000-0000-000000000001`，不是世界名称。
+- 文件名必须与文档中的规范化 `id` 完全一致。例如 ID `spawn` 只能保存为
+  `spawn.json`。
+- 文档中的 `world.uuid` 必须匹配目录 UUID。`world.key` 是可读元数据，例如
+  `minecraft:overworld`；世界已加载时以内存中的当前 Namespaced Key 为准，未加载世界
+  的同目录文档则必须彼此一致。
+- 区域 ID 必须已经是规范化小写，只允许 `[a-z0-9._-]+`；加载器不会代为转换。
+  世界 UUID 是身份，Namespaced Key 只用于可读诊断。
+- 删除区域不会直接清空文件，而是移动到根目录 `.trash/<world-uuid>/` 下的唯一文件名。
 
-## area.json
+插件会完整 staging `worlds/` 下的全部规范 UUID 目录，包括当前未加载的世界；任一
+文档失败都会拒绝整次启动或 reload。已加载世界以及至少含一个区域文档的未加载世界
+若没有 `__global__.json`，会自动合成空的 `__global__`：Global Shape、无 parent、
+空 owners/members、priority 为 `-2147483648`。
+
+游戏内可执行 `/rr region create global` 将这个合成根区域直接持久化；该操作不需要
+几何选点，因为 Global Shape 始终覆盖所属世界的全部有限坐标。
+
+## 严格 JSON 契约
+
+区域文档使用 UTF-8 严格 JSON。以下情况都会拒绝整个 reload：
+
+- 缺少任意必填字段；
+- 任意层出现未知字段、未知模块、未知 Shape type 或未知 Flag；
+- 重复对象 key，包括嵌套对象中的重复 key；
+- 注释、尾逗号、单引号、根值后的额外内容；
+- `NaN`、`Infinity`、数值溢出或字段类型不符；
+- 文档世界、ID、文件名或目录互不匹配；
+- parent 缺失、跨世界、成环、形状不包含 child，或 global 约束不成立。
+
+错误会报告文件路径和 RFC 6901 JSON Pointer，例如
+`spawn.json#/modules/music/channels/bgm/policy`。输入对象字段顺序不影响读取；插件写回
+时使用固定字段顺序，并排序 domain、Flag 与频道 key，便于版本控制。
+
+reload 会先在后台完整 staging 所有已加载世界，再一次性验证父子图。只有全部成功
+才发布新 `RegionSnapshot`；任一文件失败时不会发布部分结果，旧快照继续运行。
+
+保存使用同目录临时文件、强制落盘和原子移动。文件系统不支持 `ATOMIC_MOVE` 时保存
+失败，不会降级成可能被读到半份内容的普通覆盖。
+
+## 完整区域文档
 
 ```json
 {
-  "channel": "bgm",
-  "order": 0,
-  "priority": "NORMAL",
-  "random": false,
-  "loop": true,
-  "enabled": true,
-  "overwrite": true,
-  "volume": 1.0,
-  "pitch": 1.0,
-  "enterCommands": [],
-  "exitCommands": [],
+  "schemaVersion": 1,
+  "id": "forest",
+  "world": {
+    "uuid": "00000000-0000-0000-0000-000000000001",
+    "key": "minecraft:overworld"
+  },
+  "parent": "__global__",
+  "priority": 5,
   "shape": {
-    "type": "sliced_polygon",
-    "slices": [
-      {
-        "y": 60.0,
-        "polygon": [
-          { "x": 120.0, "z": 120.0 },
-          { "x": 180.0, "z": 120.0 },
-          { "x": 180.0, "z": 180.0 },
-          { "x": 120.0, "z": 180.0 }
-        ]
-      },
-      {
-        "y": 80.0,
-        "polygon": [
-          { "x": 100.0, "z": 130.0 },
-          { "x": 140.0, "z": 100.0 },
-          { "x": 190.0, "z": 120.0 },
-          { "x": 200.0, "z": 170.0 },
-          { "x": 160.0, "z": 200.0 },
-          { "x": 110.0, "z": 180.0 }
-        ]
-      },
-      {
-        "y": 100.0,
-        "polygon": [
-          { "x": 150.0, "z": 120.0 },
-          { "x": 190.0, "z": 180.0 },
-          { "x": 110.0, "z": 180.0 }
-        ]
-      }
+    "type": "polygon",
+    "minY": 50.0,
+    "maxY": 100.0,
+    "vertices": [
+      { "x": 0.0, "z": 0.0 },
+      { "x": 100.0, "z": 0.0 },
+      { "x": 100.0, "z": 100.0 },
+      { "x": 0.0, "z": 100.0 }
     ]
+  },
+  "owners": {
+    "players": ["11111111-1111-1111-1111-111111111111"],
+    "groups": ["builders"]
+  },
+  "members": {
+    "players": [],
+    "groups": ["visitors"]
+  },
+  "flags": {
+    "core.allow-player-regions": "allow",
+    "build": "deny",
+    "pvp": "allow"
+  },
+  "modules": {
+    "music": {
+      "binding": null,
+      "channels": {
+        "ambience": {
+          "policy": "add",
+          "order": 10,
+          "random": false,
+          "loop": true,
+          "volume": 0.5,
+          "pitch": 1.0,
+          "overwrite": true,
+          "tracks": [
+            {
+              "id": "forest_wind",
+              "sound": "rookie_music:ambience.forest_wind",
+              "duration": 120
+            }
+          ]
+        }
+      }
+    },
+    "commands": {
+      "binding": null,
+      "enter": ["title {player} actionbar {\"text\":\"进入森林\"}"],
+      "leave": ["title {player} actionbar {\"text\":\"离开森林\"}"]
+    }
   }
 }
 ```
 
-`channel` 决定混音频段；`order` 用于同优先级排序，值越大越优先。旧文件缺少这两个字段时自动采用 `bgm` 和 `0`。
+根对象只允许以下十个字段，且全部必填：
 
-候选区域固定按 `priority` 降序、`order` 降序、区域 ID 升序排列。
+| 字段 | JSON 类型 | 约束 |
+| --- | --- | --- |
+| `schemaVersion` | integer | 必须为 `1` |
+| `id` | string | 与文件名一致，规范化后匹配 `[a-z0-9._-]+` |
+| `world` | object | 只含必填 `uuid`、`key` |
+| `parent` | string 或 null | 普通区域必填同世界 parent ID；global 必须为 null |
+| `priority` | 32-bit integer | 重叠分支的 Flag 决策优先级 |
+| `shape` | object | 下述四种 Shape 之一 |
+| `owners` | object | 必填 `players`、`groups` 数组 |
+| `members` | object | 必填 `players`、`groups` 数组 |
+| `flags` | object | Flag 名到强类型 JSON 值；可为空对象 |
+| `modules` | object | 必须且只能包含 `music`、`commands` |
 
-### CT 切片生长
+## Shape
 
-切片按 `y` 从低到高排列。每个 Polygon 原样向上生长，直到相邻的更高切片接管：
+所有坐标必须是有限数值。X/Z 边界包含在区域中，Y 使用半开区间：包含 `minY`，不包含
+`maxY`。这使上下相邻的两个区域不会同时命中同一个 Y 平面。
 
-```text
-Y=60–79   使用 Y=60 的四边形
-Y=80–99   使用 Y=80 的六边形
-Y=100     使用 Y=100 的三角形
-```
-
-各切片可以有不同顶点数，不要求顶点一一对应。`y` 必须是 32 位整数方块层；Polygon 至少需要 3 个点且不得自相交。最高切片默认占一格高度。单区域最多 512 张切片、每张最多 512 个顶点、全部切片合计最多 32768 个顶点；这些上限会在昂贵的自相交检查前验证，以保护服务器主线程。
-
-区域几何只接受 `shape.type = sliced_polygon`。旧 `min` / `max`、`minPoint` / `maxPoint` 长方体格式不再读取，也不会自动迁移。
-
-## 游戏内 CT ROI 编辑器
-
-管理员在目标世界执行：
-
-```text
-/am area create <区域ID>
-/am area edit <世界> <区域ID>
-/am area show <世界> <区域ID>
-```
-
-进入编辑模式需要至少 5 个空背包格，会获得 5 件只在本次会话有效的工具：
-
-- 烈焰棒「ROI 勾画笔」：新切片第一次右键使用该方块的 `blockY` 锁定切片 Y；空白切片同时添加顶点 #1，复制轮廓的切片只锁定 Y、不追加顶点。后续右键只读取方块中心 X/Z；左键撤销；潜行左键清空当前切片。
-- 黄绿色染料「保存并选择下一切片」：进入 Y 待选择状态；普通使用时，点击新 Y 会复制当前轮廓，点击已有 Y 会载入该层原轮廓；潜行使用则从空轮廓开始，也可在已有 Y 重画该层。第一次右键可选择任意更高且有效的方块层。
-- 时钟「上一层」：验证并暂存当前层，返回上一张已保存切片。
-- 绿宝石「完成编辑」：原子写入该区域的 `area.json`，并立即重建空间索引。
-- 屏障「取消编辑」：5 秒内再次使用后放弃本次所有修改。
-
-工具可在玩家自己的 36 格背包与快捷栏之间移动，但不能丢弃、放入副手、盔甲格、工作台或外部容器。工具丢失时可使用 `/am area editor finish` 或 `/am area editor cancel`。同一区域同时只能被一名管理员编辑；编辑期间不能删除该区域或增删其音乐。退出、切换世界、死亡、重载或停服会取消会话并清理工具。
-
-编辑已有区域时默认载入最低切片，且已有切片的 Y 不会因后续顶点点击而移动。要切换到更高的已有切片，先使用“下一切片”，再右键该切片 Y 上的方块。
-
-编辑器保存的是被点击方块自身的原始 `blockY`，不会自动加减一。几何体的最后一张切片只覆盖 `[blockY, blockY + 1)`：若点击 Y=64 的地面方块，站在其顶面的玩家脚部通常位于 Y=65，正好落在排除上界。配置站立区域时应选择脚部实际所在层（可临时放置标记方块）或补充更高切片，并用 `/am area show` 检查粒子轮廓。
-
-## music.json
+### Cuboid
 
 ```json
 {
-  "music": [
+  "type": "cuboid",
+  "min": { "x": 0.0, "y": 64.0, "z": 0.0 },
+  "max": { "x": 16.0, "y": 80.0, "z": 16.0 }
+}
+```
+
+`min` 与 `max` 都必须且只能包含 `x`、`y`、`z`。三个轴都必须有正长度。木斧选择
+方块时，编辑器把较大方块坐标加一后写成 `max`，所以选择同一个方块也会生成
+1×1×1 的有效 Bounds。
+
+### Polygon Prism
+
+```json
+{
+  "type": "polygon",
+  "minY": 60.0,
+  "maxY": 90.0,
+  "vertices": [
+    { "x": 0.0, "z": 0.0 },
+    { "x": 20.0, "z": 0.0 },
+    { "x": 10.0, "z": 20.0 }
+  ]
+}
+```
+
+Polygon 至少三个有效 X/Z 顶点，必须是简单、非自交、非零面积轮廓。
+`maxY > minY`。首尾闭合点可以输入，但规范输出会省略重复的最后一个点。
+
+### Sliced Polygon
+
+```json
+{
+  "type": "sliced",
+  "minY": 60.0,
+  "maxY": 100.0,
+  "slices": [
     {
-      "id": "spawn_day",
-      "sound": "rookie_music:bgm.overworld_day",
-      "duration": 180
+      "y": 60.0,
+      "vertices": [
+        { "x": 0.0, "z": 0.0 },
+        { "x": 30.0, "z": 0.0 },
+        { "x": 30.0, "z": 30.0 },
+        { "x": 0.0, "z": 30.0 }
+      ]
+    },
+    {
+      "y": 80.0,
+      "vertices": [
+        { "x": 5.0, "z": 5.0 },
+        { "x": 25.0, "z": 5.0 },
+        { "x": 25.0, "z": 25.0 },
+        { "x": 5.0, "z": 25.0 }
+      ]
     }
   ]
 }
 ```
 
-`id` 只需在当前区域内唯一；`sound` 是资源包 Sound Event；`duration` 单位为秒。
+`minY` 与 `maxY` 都是必填的显式边界，且 `maxY > minY`。切片必须按 `y` 严格递增，
+首个切片的 `y` 必须与 `minY` 完全相等，因此 `[minY,maxY)` 内不会出现未定义空层。
+每个轮廓从自己的 `y` 生效，持续到下一切片；最后一层持续到显式 `maxY`。`maxY`
+必须高于最后切片。每层可使用完全不同的顶点数和轮廓，但每层都必须是有效 Polygon。
 
-## 播放频道
+硬上限为 512 个切片、每层 512 个顶点、总计 32768 个顶点。
 
-频道与区域动作命令总开关在 `config.yml` 中统一声明：
-
-```yaml
-actions:
-  commands:
-    enabled: true
-
-channels:
-  bgm:
-    mode: exclusive
-    maxLayers: 1
-    trigger: continuous
-  ambience:
-    mode: additive
-    maxLayers: 3
-    trigger: continuous
-  stinger:
-    mode: additive
-    maxLayers: 2
-    trigger: enter_once
-```
-
-- `exclusive`：同一玩家在该频道只保留一层，并强制 `maxLayers: 1`。当前区域仍有效时，只有 `overwrite: true` 且优先级严格更高的新区域才能抢占。
-- `additive`：按排序同时播放前 `maxLayers` 个区域，忽略 `overwrite`；有空位时立即补入下一候选。
-- `continuous`：区域持续有效；曲目到期后，只有 `loop: true` 才选择下一首。
-- `enter_once`：只在从区域外进入区域内时触发并忽略 `loop`。因层数限制被压制后，必须离开再进入才会触发。
-
-`actions.commands.enabled: false` 会关闭全部 `enterCommands` 与 `exitCommands`。关闭期间的动作不会排队或延迟补执行；重新开启后，玩家需要离开并重新进入区域才会建立新的配对动作。
-
-可增加自定义频道。名称只能包含小写字母、数字、点、下划线和连字符。未知频道、非法模式、非法触发器或非法层数会使整次 `/am reload` 失败，旧运行配置继续生效。
-
-相同玩家的相同 Sound Event 只实际播放一次。多个区域共同持有引用，最后一个引用离开后才执行 `stopSound`。
-
-## 入场与离场命令动作
-
-区域可通过 `area.json` 的可选 `enterCommands` 与 `exitCommands` 数组，在玩家进入及其配对离开时调用原版命令或服务端已注册的其他插件命令：
+### Global
 
 ```json
-{
-  "channel": "stinger",
-  "enterCommands": [
-    "title {player} title {\"text\":\"发现 Boss 区域\",\"color\":\"dark_red\"}",
-    "/tag {player} add discovered_{area_id}",
-    "effect give {player} minecraft:glowing 5 0 true"
-  ],
-  "exitCommands": [
-    "tag {player} remove discovered_{area_id}",
-    "effect clear {player} minecraft:glowing"
-  ]
+{ "type": "global" }
+```
+
+只有 ID `__global__` 可使用。该文档必须 `parent: null`。普通区域不能使用 Global
+Shape；global owners 会作为所有有限子区的祖先 owner 继承，members 仍只作用于
+global 本身。
+
+## Parent、覆盖与 priority
+
+- 普通区域必须有 parent，且 parent 必须存在于同一世界。
+- child 对 parent 的几何关系必须为 `INSIDE`。child 可以贴着 parent 的墙面、地面
+  或顶面，但不能与 parent 完全相等，也不能越界。
+- parent 图不能成环。删除有 child 的 parent 会被管理事务拒绝。
+- 互不相关的区域可以只接触边界；`TOUCHING` 不算正体积覆盖。
+- `/rr` 创建/编辑时，部分覆盖、相等、包含或新的 peer 正体积覆盖会按权限拒绝或要求
+  一次性确认。直接手改 JSON 属于管理员操作；reload 会验证 parent 图，但不会替你
+  执行命令层的覆盖授权流程。
+- Flag 解析遇到多个互不相关分支时只保留最高 `priority` 的贡献；同 priority 的内置
+  State Flag 冲突由 `deny` 胜出。
+
+## Owners 与 members
+
+```json
+"owners": {
+  "players": ["11111111-1111-1111-1111-111111111111"],
+  "groups": ["admins"]
 }
 ```
 
-### 触发语义
+- `players` 只接受标准 UUID 字符串。
+- `groups` 是区域内使用的组 ID，读取时去除两端空白并转为小写。玩家拥有有效权限节点
+  `rookieregions.group.<组ID>` 时才会被运行时 `Subject` 识别为该组；可通过权限插件
+  授予这个动态节点。
+- Owner 身份沿 parent 链向 child 生效；member 只检查当前叶区域的 members。
+- Owners/members 不会覆盖显式 `deny`，只参与未显式设置时的默认保护决策。
 
-- 非空 `enterCommands` 或 `exitCommands` 只允许用于 `trigger: enter_once` 的频道；在 `continuous` 频道中配置任一数组都会使加载或 `/am reload` 失败。字段缺失或为 `null` 时按空数组处理。
-- 只有区域由“未命中”变为“命中”，并且该区域在频道排序与 `maxLayers` 限制后实际入选层位时，才执行命令。默认 Stinger 同时最多触发两层；被压制的区域必须离开再进入，不会因后来出现空位而延迟补触发。
-- 只有某次物理进入真正入选、且至少一条 `enterCommands` 在主线程获得 Bukkit 的成功派发结果，插件才登记 activation token。随后走出、传送离开、切换世界或重载后不再命中该区域时，会消费同一 token 并执行一次入场时冻结的 `exitCommands`。如果所有入场命令都失败或被跳过，就没有配对离场动作；`exitCommands` 不是独立的离开监听器。被压制的区域没有 token；玩家掉线或插件停服默认不执行离场命令。
-- 命令与声音引用分别触发。两个区域使用同一 Sound Event 时，声音可能只播放一次，但两个入选区域各自的命令仍会执行。
-- `music.json` 可以为空；这种 command-only 区域可执行入场与配对离场命令，不要求配置声音。
-- 一直停留在区域内不会重复执行。曲目循环或续播、重载后仍命中同 UUID 区域、CraftEngine 资源包就绪后的声音补播均不会再次执行入场命令。若 `/am reload` 删除区域或改变形状使玩家不再命中，插件把它视为逻辑离开并执行已登记 token 的冻结离场动作；离开后重新进入才会建立新 token。
+## 强类型 Flag
 
-### 执行格式
+`flags` 不是任意字符串 Map。每个 key 必须存在于运行时 Flag Registry，值必须通过该
+Flag 的 codec。当前内置 Flag 全部是 State，JSON 值必须是字符串 `allow` 或 `deny`；
+`null` 不是 unset，要取消显式值应删除该属性或使用 `/rr ... unset`。
 
-命令以服务端控制台身份，在 Bukkit 主线程按数组顺序执行。一个字符串严格对应一次命令派发：RookieAreaMusic 不会按分号、`&&`、管道或引号再次拆分，也不会调用操作系统 Shell。推荐不写命令开头的 `/`；为了方便复制游戏内命令，允许至多一个前导 `/`，执行前会自动移除。
+| Flag | 未显式设置时的行为 |
+| --- | --- |
+| `build` | 荒野、owner/member 允许；其他玩家拒绝 |
+| `block-break` | 未设置时回退到 `build` |
+| `block-place` | 未设置时回退到 `build` |
+| `use` | 荒野、owner/member 允许；其他玩家拒绝 |
+| `container` | 未设置时回退到 `use`；use 也未设置时，荒野、owner/member 允许，其他玩家拒绝 |
+| `pvp` | 允许 |
+| `entry` | 允许 |
+| `explosion` | 允许 |
+| `core.allow-player-regions` | 拒绝；只认目标 parent 上本地显式的 `allow` |
 
-每条命令独立执行。某条命令抛出异常、返回失败或占位符无法解析时，插件记录原因、跳过或结束该条，然后继续执行后面的命令。失败命令不会自动重试，因为目标插件可能已经执行了部分副作用。只有至少一次 Bukkit 命令派发返回成功，才登记本次入场的 activation token；离场尝试会先消费 token，即使离场命令失败也不会反复重试。
+除 `core.allow-player-regions` 为 `LOCAL_ONLY` 外，内置保护 Flag 会从最近的有限祖先
+继承，然后尝试 global 显式值，最后使用默认值。对应的
+`rookieregions.bypass.*` 权限可绕过保护决定。
 
-### 内置占位符
+修改 `core.allow-player-regions` 必须拥有 `rookieregions.admin`；只有
+`rookieregions.region.flag` 不足以修改它。其他内置保护 Flag 使用
+`rookieregions.region.flag` 作为修改权限。
 
-内置占位符不依赖 PlaceholderAPI。花括号与百分号两种写法等价：
+## Music 模块
 
-| 含义 | 花括号 | 百分号 |
-|---|---|---|
-| 玩家名 | `{player}`、`{player_name}` | `%player%`、`%player_name%` |
-| 玩家 UUID | `{player_uuid}` | `%player_uuid%` |
-| 当前世界 | `{world}` | `%world%` |
-| 区域所属世界 | `{area_world}` | `%area_world%` |
-| 区域 ID | `{area}`、`{area_id}` | `%area%`、`%area_id%` |
-| 区域内部 UUID | `{area_uuid}` | `%area_uuid%` |
-| 玩家精确坐标 | `{x}`、`{y}`、`{z}` | `%x%`、`%y%`、`%z%` |
-| 玩家方块坐标 | `{block_x}`、`{block_y}`、`{block_z}` | `%block_x%`、`%block_y%`、`%block_z%` |
+固定结构如下；即使没有音乐，也必须写 `"channels": {}`：
 
-位置类占位符取该组命令在 Bukkit 主线程开始派发时的玩家当前位置。通常，入场动作得到区域内位置，离场动作得到走出或传送后的新位置；若玩家在异步判定与主线程派发之间又快速移动或连续传送，则以实际开始派发时的位置为准，并不保证是第一次越界的落点。`{area_world}` / `%area_world%` 和其他区域类占位符仍取 activation token 对应的区域信息。
+```json
+"music": {
+  "binding": null,
+  "channels": {}
+}
+```
 
-安装 PlaceholderAPI 后，RookieAreaMusic 还会展开其他扩展提供的 `%...%`，例如 `%luckperms_primary_group%`。PlaceholderAPI 是可选依赖；未安装时所有内置占位符仍然工作。非内置占位符没有对应扩展、扩展报错或展开后仍保留 `%...%` 时，该条命令会被跳过，而不是把未解析文本发送给目标插件。
+`binding` 必填。`null` 表示使用保存该 profile 的 RookieRegions 区域自身几何；也可以
+显式映射到同世界的只读 provider 区域：
 
-### 限制与安全边界
+```json
+"binding": {
+  "provider": "worldguard",
+  "region": "forest"
+}
+```
 
-- `enterCommands` 与 `exitCommands` 分别最多配置 16 条命令；每条模板最多 1024 个字符，每个数组的全部模板各自合计最多 8192 个字符；占位符展开后的单条命令最多 4096 个字符。
-- 命令在读取配置及占位符展开后都会检查长度与控制字符；空命令、NUL、CR/LF、两个前导 `/` 或超限内容会被拒绝或跳过。
-- `area.json` 等配置文件等同于受信任的服主管理输入，因为命令拥有控制台权限。不要把写入这些文件或修改 `enterCommands`、`exitCommands` 的能力交给普通玩家。
-- PlaceholderAPI 扩展可能返回玩家可控文本。Bukkit 命令之间没有通用参数转义规则，因此应优先把 `{player_uuid}` 或 `{player}` 放在目标命令明确要求玩家标识的位置，避免把自由文本占位符放到权限、命令名或其他敏感参数中。
-- RookieAreaMusic 只保证“一条配置字符串只派发一次”并阻断换行等多命令载荷；目标插件如何解释空格、引号及参数，仍由该插件决定。
+`provider` 与 `region` 必须已经是去除首尾空白并转为小写后的规范形式。相同世界内，
+同一模块的两个 profile 不得指向同一个 `provider + region`；完整 staging 和每次候选
+快照提交都会拒绝这种歧义。外部 target 不存在时不会退回 Native 几何。
 
-## 固定坐标音源
+频道名必须与 `config.yml` 的 `music.channels` key 完全一致。每个频道策略必须且只能
+包含以下字段：
 
-固定音源适合树上的鸟叫、瀑布、篝火、机器等有明确发声位置的环境音。每个音源使用一个独立文件：
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `policy` | string | `inherit`、`add`、`replace`、`block`，大小写不敏感 |
+| `order` | 32-bit integer | 同频道的确定性策略/层排序 |
+| `random` | boolean | 播放时从 tracks 随机选一首；false 使用第一首 |
+| `loop` | boolean | duration 到期后是否再次播放 |
+| `volume` | number | `0.0` 至 `1.0` |
+| `pitch` | number | 大于 `0.0` 且不超过 `2.0` |
+| `overwrite` | boolean | 同一播放层重播时是否先停止当前 Sound Event |
+| `tracks` | array | 见下文；INHERIT/BLOCK 必须为空 |
+
+四种策略的含义：
+
+- `INHERIT`：显式不操作，保留此前从 parent 或其他适用区域累积的结果；tracks 必须
+  为空。频道没有配置时也等价于 `INHERIT`。
+- `ADD`：保留已有层，再加入本区域层；至少一首 track。
+- `REPLACE`：清空本父链的祖先层以及 order 更低的无关分支层，再加入本区域层；至少
+  一首 track。
+- `BLOCK`：执行与 REPLACE 相同的清理但不加入音轨，并建立面向无关分支的 order
+  阻断下限；order 更低的无关 ADD/REPLACE/BLOCK 会被压制。tracks 必须为空。
+
+每条父链总是按 Global→父→child 应用，祖先与后代之间不比较 order；因此 child 即使
+order 更低，ADD/REPLACE/BLOCK 仍会在祖先之后生效。只有互不相关的重叠区域按较低
+order 到较高 order 应用，较高 order 的 REPLACE/BLOCK 可确定性覆盖较低分支。最终层
+按 order、区域深度降序排序；`EXCLUSIVE` 频道只播放第一层，`LAYERED` 最多播放
+`maxLayers` 层。
+
+Track 必须且只能包含：
+
+```json
+{
+  "id": "forest_wind",
+  "sound": "rookie_music:ambience.forest_wind",
+  "duration": 120
+}
+```
+
+`id` 在同一频道策略内唯一，`sound` 是 Bukkit/CraftEngine Sound Event，`duration`
+是正整数秒。2.0 没有 1.x 的独立固定坐标 `sources/*.json` 模块。
+
+## Commands 模块
+
+```json
+"commands": {
+  "binding": null,
+  "enter": ["say {player} entered {region}"],
+  "leave": ["say {player} left {region}"]
+}
+```
+
+两个数组都必填，可以为空。字符串不能为空；一个前导 `/` 会在读取时移除。命令根据
+玩家的物理区域成员变化以服务端控制台身份执行：进入时 parent 先于 child，离开时
+child 先于 parent。同一区域内持续移动不会重复执行。
+
+当前展开五个内置占位符：
+
+- `{player}`：玩家名称；
+- `{uuid}`：玩家 UUID；
+- `{region}`：实际命中的 provider region ID；
+- `{provider}`：`rookieregions` 或 `worldguard`；
+- `{profile}`：保存命令 profile 的完整 Native key，例如 `minecraft:overworld/forest`。
+
+2.0 不提供逐条编辑 Commands 内容的命令；请严格手工修改完整区域 JSON 后执行
+`/rr reload`。模块几何绑定可用 `/rr module bind|unbind|info` 管理。不要在文档中使用
+1.x 的 PlaceholderAPI 占位符或 activation-token 语义。
+
+## Provider 绑定
+
+Native 是默认 provider。以下命令把已有 profile 映射到只读 provider 几何，或恢复
+Native 自身几何：
 
 ```text
-worlds/<世界名>/sources/<音源 ID>.json
+/rr module bind <music|commands> <profile-region> <provider> <provider-region>
+/rr module unbind <music|commands> <profile-region>
+/rr module info <music|commands> <profile-region>
 ```
 
-示例 `tree_birds.json`：
+2.0 内建 `rookieregions` 与可选 `worldguard`。绑定只改变 Music/Commands 的几何来源，
+绝不让 WorldGuard 接管 RookieRegions 原生保护或写事务。WorldGuard 捕获和外部 ID
+映射作为同一个不可变 view 发布；失败时继续使用 last-good view。非几何包含的
+WorldGuard parent 会展开到 Global，并在 provider diagnostics 中说明原因。
 
-```json
-{
-  "position": {
-    "x": 128.5,
-    "y": 72.5,
-    "z": 144.5
-  },
-  "sound": "rookie_music:source.tree_birds",
-  "duration": 6,
-  "interval": 12,
-  "volume": 1.0,
-  "pitch": 1.0,
-  "enabled": true
-}
-```
+## config.yml
 
-- `position`：声音实际发出的世界坐标，建议使用方块中心的 `.5` 坐标。
-- `sound`：资源包 Sound Event。
-- `duration`：一次声音的持续秒数，必须大于 0。
-- `interval`：一次播放结束后的静默秒数，`0` 表示连续衔接。
-- `volume`：原始音量，范围 `(0, 16]`；允许大于 1 来扩大原版可听距离。
-- `pitch`：音高，范围 `(0, 2]`。
-- `enabled`：是否启用；省略时默认为 `true`。
-
-音量与方向由 Minecraft 固定位置声音原生处理，会随玩家移动连续变化，不会每秒重播来模拟音量。原版可听距离约为 `16 × max(1, volume)` 格；资源包中的声音衰减设置也会影响最终听感。建议鸟叫素材使用非循环音频，并通过 `duration + interval` 控制重复节奏。
-
-多个固定音源即使使用相同 Sound Event，也会从各自坐标独立发声。由于 Bukkit 只能按声音键和类别停止客户端声音，正在发声的同键音源被删除、禁用或修改时，插件会先停止该键的 `AMBIENT` 声音，再立即补播当时仍在发声的有效音源；处于静默间隔的音源不会被提前播放。
-
-## CraftEngine 自定义声音对接
-
-RookieAreaMusic 与 CraftEngine 通过标准的 Minecraft Sound Event 键松耦合对接。CraftEngine 负责 OGG 文件、`sounds.json` 生成、资源包合并与下发；RookieAreaMusic 不读取 CraftEngine 的资源文件，也不配置或上传材质包，只在区域或固定音源需要播放时调用 Bukkit 声音 API。区域曲目使用跟随玩家实体的 `MUSIC` 声音类别，固定坐标音源使用世界坐标上的 `AMBIENT` 类别，因此玩家移动不会让长 BGM 远离听者，停止区域曲目也不会误停同键固定音源。
-
-先在 CraftEngine 的包配置中声明声音。例如长音乐建议启用流式读取：
+`config.yml` 也是 `schemaVersion: 1`。当前运行时读取以下设置：
 
 ```yaml
-sounds:
-  rookie_music:bgm.overworld_day:
-    sounds:
-      - name: "rookie_music:music/overworld_day"
-        stream: true
-        attenuation_distance: 256
+schemaVersion: 1
+
+editor:
+  confirmationSeconds: 30
+
+playerCreation:
+  enabled: true
+
+protection:
+  notifyDeniedActions: true
+
+music:
+  scanPeriodTicks: 20
+  channels:
+    bgm:
+      mode: EXCLUSIVE
+      maxLayers: 1
+    ambience:
+      mode: LAYERED
+      maxLayers: 3
+    stinger:
+      mode: LAYERED
+      maxLayers: 2
 ```
 
-然后只把同一个事件键写入 RookieAreaMusic：
-
-```json
-{
-  "music": [
-    {
-      "id": "spawn_day",
-      "sound": "rookie_music:bgm.overworld_day",
-      "duration": 180
-    }
-  ]
-}
-```
-
-- `sound` 必须是声音事件键，不是 OGG 路径或文件名。建议始终使用完整的 `namespace:path`。
-- RookieAreaMusic 仍需 `duration`，因为声音事件本身不包含 OGG 的实际时长；该值用于循环、换曲和引用生命周期。
-- 固定坐标音源同样直接填写 CraftEngine 事件键，例如 `rookie_music:source.tree_birds`。可听距离与衰减主要由 Minecraft、RookieAreaMusic 的 `volume` 以及 CraftEngine 声音条目的 `attenuation_distance` 共同决定。
-- 可直接复制 [CraftEngine 多声道声音模板](examples/craftengine/rookie_music/configuration/sounds.yml)。模板包含长 BGM、三层 Ambience、Stinger 和固定音源配置。
-- RookieAreaMusic 不强制查询 CraftEngine 内部声音表。这样既允许使用 CraftEngine 生成的事件，也允许使用原版或其他资源包提供的事件，并避免绑定 CraftEngine 的内部版本。
-
-`plugin.yml` 将 CraftEngine 声明为可选依赖。检测到 CraftEngine 时，玩家资源包报告 `SUCCESSFULLY_LOADED` 后，RookieAreaMusic 会等待 10 ticks 做防抖，再为该玩家串行执行“停止旧区域声音 → 重新判断区域 → 播放当前声音”。当前区域的 `enter_once` 声音可以补播，确保客户端不会因资源包尚未就绪而错过入场音；该维护性补播不会再次执行 `enterCommands` 或 `exitCommands`。固定坐标音源不强制重播，会在下一次正常周期播放。
-
-推荐重载顺序：
-
-1. OGG、CraftEngine 声音配置或资源包内容发生变化：先执行 `/ce reload all`，并按 CraftEngine 的流程重新生成或下发资源包。
-2. RookieAreaMusic 的声音事件键、时长、区域或固定音源配置发生变化：再执行 `/am reload`。
-3. 只替换同一事件键对应的 OGG、且 RookieAreaMusic 的时长不变时，不需要执行 `/am reload`。
-
-## 查询与线程模型
-
-插件加载或重载时会：
-
-- 对切片高度排序并用二分搜索定位活动切片：`O(log S)`；
-- 预计算 Polygon 边数据，点在多边形内判断为 `O(V)`；
-- 按 Minecraft Chunk 建立空间索引，将世界全部 `R` 个区域缩小为附近 `K` 个候选；
-- 按玩家 UUID、世界和精确坐标缓存上次结果。玩家未移动时复用；即使仍在同一方块内，只要坐标变化也会重新判断边界。
-- 固定音源被删除、禁用或修改时主动停止旧的 `AMBIENT` 实例；多个同键音源受影响时立即补播仍有效的实例。世界暂未加载或一次播放失败时会在 1 秒后重试。
-
-缓存未命中时，单次区域查询约为 `O(K × (log S + V))`。覆盖超过 4096 个 Chunk 的超大区域作为世界级候选处理，避免展开出大量索引项。
-
-每 20 ticks（约 1 秒）扫描一次在线玩家，最多分成 4 个异步分片。主线程只抓取不可变的位置快照并调度固定音源；Chunk 查询、切片判断和区域播放决策在异步线程执行；最终 `playSound`、`stopSound`、占位符展开与控制台命令派发回到 Bukkit 主线程按玩家 FIFO 顺序执行。登录和传送会立即提交一次判断，同一玩家的任务保持串行；尚未开始的旧 revision 会被丢弃，已经开始并推进逻辑会话的任务则完整提交输出增量，后续 revision 再按 FIFO 修正，保证逻辑状态与客户端状态不会分叉。
-
-运行时的曲目、频道、固定音源和空间索引通过一个原子快照发布，因此重载期间不会混用新旧配置。重载成功后会立即刷新固定音源并重新计算在线玩家，但仍处于同一区域的 `enter_once` 不会重复触发。
-
-## 给 LLM 的最小编辑上下文
-
-- 修改区域范围、播放策略或入场/离场命令：只提供该区域的 `area.json`。
-- 新增、删除或修改音乐：只提供该区域的 `music.json`。
-- 新建区域：复制两个文件到 `worlds/<世界名>/regions/<新区域 ID>/`。
-- 新增或修改固定音源：只提供对应的 `worlds/<世界名>/sources/<音源 ID>.json`。
-- 修改后执行 `/am reload`。任一配置无效时会拒绝整次重载并继续使用旧运行配置。
-
-## 管理命令
-
-```text
-/am music add <世界> <区域> <音乐ID> <声音键> <秒数>
-/am music del <世界> <区域> <音乐ID>
-/am music list <世界> <区域> [页码]
-/am area create <区域ID>
-/am area edit <世界> <区域ID>
-/am area show <世界> <区域ID>
-/am area editor <finish|cancel>
-/am area del <世界> <区域>
-/am reload
-```
-
-旧版根目录下的集中式 `area.json` / `music.json` 和木棍两点长方体编辑流程已移除，不会自动迁移。
+- `confirmationSeconds` 与 `scanPeriodTicks` 必须为正数。
+- `music.channels` 至少一个；`EXCLUSIVE` 强制 `maxLayers: 1`，`LAYERED` 的
+  `maxLayers` 必须为正数。
+- `playerCreation.enabled: false` 阻止非管理员使用创建命令。
+- `notifyDeniedActions` 控制保护拒绝提示。
+- 严格区域 JSON 是不可关闭的持久化契约。
